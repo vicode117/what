@@ -1,82 +1,77 @@
 # Design — TranslateTrainer
 
-Initial architecture design (Slice 1), following the product prompt.
+Architecture after Slices 1–6, following the product prompt.
 
 ## Architecture in brief
 
 - **Electron architecture**: React renderer (Vite + Tailwind + shadcn/ui primitives) ⇄ typed IPC over
   `contextBridge` (`window.app.*` only, result-envelope, Zod-validated in Main) ⇄ Electron Main ⇄
   Application Core. `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`.
-- **Vault structure**: `translations/YYYY/MM/*.md` (source of truth), `config.json` (non-secret
-  settings), `prompts/` (user prompt overrides), plus future `training/`, `memory/`, `logs/`, `.app/`
-  (derived, rebuildable) directories from the spec.
-- **TranslationRecord**: `id: tr_YYYYMMDD_NNN`, `createdAt`, `sourceLanguage`, `targetLanguage`,
-  `mode`, `provider`, `model`, `tags`, plus body sections `## Source`, `## Translation` (final),
-  `## AI Translation` (original, present when the user edited), `## Notes`.
+- **Vault structure** (source of truth):
+  - `translations/YYYY/MM/tr_YYYYMMDD_NNN.md` — records with YAML frontmatter and body sections
+    `## Source`, `## Translation` (final), `## AI Translation` (original, present when the user
+    edited), `## Notes`. `analyzedAt` / `deletedAt` frontmatter fields track analysis and soft delete.
+  - `memory/vocabulary/*.md` + `memory/expressions/*.md` — learning points (dedup/merged by
+    normalized term, provenance via `sourceTranslationIds`, occurrence dates, review scheduling state).
+  - `memory/glossary/glossary.md` — explicit user glossary (`- term :: translation`).
+  - `training/sessions/YYYY-MM-DD.json` — the persisted daily session.
+  - `logs/reviews.jsonl` — append-only review events.
+  - `.app/index/search.json` — derived full-text index (rebuildable; "Rebuild Index" in Settings).
+  - `config.json` — non-secret settings; `prompts/` — user prompt overrides.
 - **AI client boundary**: `LlmClient { generate(request): Promise<GenerationResult> }` with an
   OpenAI-compatible adapter; per-attempt timeout (AbortController), bounded retry with backoff for
-  NETWORK_ERROR / RATE_LIMIT / PROVIDER_ERROR, and typed errors
-  (`TIMEOUT | RATE_LIMIT | AUTH_ERROR | NETWORK_ERROR | INVALID_RESPONSE | PROVIDER_ERROR | CANCELLED | …`).
+  NETWORK_ERROR / RATE_LIMIT / PROVIDER_ERROR, typed errors (`TIMEOUT | RATE_LIMIT | AUTH_ERROR |
+  NETWORK_ERROR | INVALID_RESPONSE | PROVIDER_ERROR | CANCELLED | …`).
 - **Renderer / Preload / Main boundary**: renderer calls only domain APIs
-  (`translation.translate/save`, `history.get`, `settings.get/update/chooseVault`); it never sees the
-  API key (only `hasApiKey`), the filesystem, or Node APIs. Credentials live in Main via Electron
-  `safeStorage` in the userData directory (outside the syncable Vault).
-- **Markdown persistence**: YAML frontmatter + fixed `##` sections, human-readable and Obsidian
-  compatible. Parser and serializer are pure, tested functions; Markdown files are authoritative and
-  any future index is derived and rebuildable.
+  (`translation.*`, `history.*`, `memory.*`, `glossary.*`, `training.*`, `maintenance.rebuildIndex`,
+  `settings.*`); it never sees the API key (only `hasApiKey`), the filesystem, or Node APIs.
+  Credentials live in Main via Electron `safeStorage` in the userData directory.
+- **Markdown persistence**: pure, tested serializer/parser; Markdown files are authoritative and
+  every index/cache is derived and rebuildable.
 
-## Repository structure
+## Data flow
 
 ```text
-translate-trainer/
-├─ apps/
-│  └─ desktop/            # Electron app (main / preload / renderer)
-│     ├─ src/main/        # window, IPC handlers, credentials, vault path
-│     ├─ src/preload/     # contextBridge domain API
-│     └─ src/renderer/    # React UI (features/, components/ui/, lib/, hooks/)
-├─ packages/
-│  ├─ contracts/          # shared types + Zod schemas + IPC contract (@tt/contracts)
-│  └─ core/               # business logic, no Electron imports (@tt/core)
-│     └─ src/
-│        ├─ ai/           # LlmClient, OpenAI-compatible adapter, retry
-│        ├─ prompts/      # PromptManager
-│        ├─ translation/  # TranslationService
-│        ├─ storage/      # Markdown serialize/parse, TranslationStore, ids
-│        └─ settings/     # SettingsStore (vault config.json)
-├─ prompts/               # version-controlled prompt templates (translation/<mode>.md)
-├─ docs/
-├─ AGENTS.md
-├─ package.json           # pnpm workspace root
-└─ pnpm-workspace.yaml
+Translate:  input ──ContextRetriever──▶ glossary + similar history ──▶ prompt ──▶ LlmClient ──▶ result
+Save:       result ──▶ TranslationStore ──▶ translations/YYYY/MM/*.md ──▶ index upsert
+Analyze:    record ──LearningExtractor (JSON+Zod)──▶ candidates ──▶ LearningPointStore (dedup/merge)
+Train:      due+weak+new points ──WeightedSelectionStrategy──▶ exercises ──▶ submit ──▶
+            AnswerEvaluator ──▶ review log append + scheduler update
+Watch:      chokidar (debounced) ──▶ re-parse changed files ──▶ index refresh (never rewrites md)
 ```
 
-Workspace packages are "internal packages": they ship TypeScript source (`main: ./src/index.ts`)
-and are bundled by Vite/electron-vite. The desktop app declares empty runtime dependencies so the
-packaged asar contains only the built `out/` bundles plus the `prompts/` resource.
+## Key decisions
 
-## IPC contract
+1. **Internal-packages pattern** — workspace packages ship TS source; electron-vite bundles them and
+   the packaged asar contains only `out/` plus the `prompts/` resource (empty runtime dependencies).
+2. **Result-envelope IPC** — every handler returns `{ok…}`; Zod failures become typed
+   `VALIDATION_ERROR`; the renderer never inspects provider exceptions.
+3. **Keys in userData, not Vault** — `config.json` (non-secret) may sync via cloud drives; the
+   safeStorage-encrypted key does not.
+4. **Search without a search library** — tokenized AND-matching with field weights plus CJK
+   substring fallback over a derived index. FlexSearch would only add value at much larger scale.
+5. **Deterministic-first training** — exercises are generated from real records (no invented
+   material); AI is used for structured extraction and answer evaluation, both Zod-validated.
+6. **Replaceable pedagogy boundaries** — `ExerciseSelectionStrategy` (default 50% due / 30% weak /
+   20% new, user-corrected first) and `ReviewScheduler` (default 1d/2d/3→60d streaks) are
+   interfaces, so FSRS-class algorithms slot in without touching UI or services.
 
-| Channel | Request | Result |
-| --- | --- | --- |
-| `translation:translate` | `{ text, sourceLanguage, targetLanguage, mode }` | `{ translatedText, provider, model, usage?, durationMs }` |
-| `translation:save` | `{ sourceText, aiTranslation, userTranslation?, …meta }` | `{ id, filePath }` |
-| `history:get` | `{ id }` | record or `null` |
-| `settings:get` | — | settings + `hasApiKey` (never the key) |
-| `settings:update` | partial provider/apiKey/vault/defaults patch | updated settings view |
-| `settings:choose-vault` | — | chosen path or `null` |
+## IPC contract (summary)
 
-Every reply is `{ ok: true, data } | { ok: false, error }`; errors carry an `ErrorCode` from
-`@tt/contracts`, so the renderer never parses provider exception strings.
+| Channel | Purpose |
+| --- | --- |
+| `translation:translate` / `translation:save` | translate with context; persist Markdown |
+| `history:get/list/update/delete/restore/analyze` | record access, filters, soft delete, extraction |
+| `memory:list/update/delete` | learning points |
+| `glossary:list/add/remove` | explicit glossary |
+| `training:get-today/submit` | daily session + answer evaluation |
+| `settings:get/update/choose-vault`, `index:rebuild` | configuration, maintenance |
 
-## User corrections (Slice 1 behavior)
+Every reply is `{ ok: true, data } | { ok: false, error }` with an `ErrorCode` from `@tt/contracts`.
 
-Saving stores `aiTranslation` always. When the user's final text differs, it is stored as
-`userTranslation` with `edited: true` in frontmatter and the AI original is preserved in a
-`## AI Translation` section. Nothing ever overwrites the AI output.
+## Status & roadmap
 
-## Roadmap
-
-Slices 2–7 from the product prompt: history + search + corrections; learning extraction with
-provenance and dedup; daily training (reverse translation + cloze) with review log; adaptive
-selection; translation memory retrieval; semantic memory (only if full-text retrieval proves
-insufficient).
+Slices 1–6 implemented and verified (lint / typecheck / 118 tests / build / packaged build).
+Slice 7 (embeddings + semantic retrieval) is deliberately NOT implemented — the spec requires full
+text retrieval to prove insufficient first. Other follow-ups: streaming for long outputs, statistics
+dashboard, richer history analytics.

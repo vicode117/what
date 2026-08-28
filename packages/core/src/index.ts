@@ -19,4 +19,19 @@ export { LearningPointStore, normalizeTerm } from './memory/learning-point-store
 export { serializeLearningPoint, parseLearningPoint } from './memory/learning-point-store'
 export { MemoryService, GlossaryStore } from './memory/memory-service'
 export { LearningExtractor, parseJsonObject } from './analysis/learning-extractor'
+export { TrainingService } from './training/training-service'
+export type { TrainingServiceDeps, BuildSessionOptions } from './training/training-service'
+export {
+  buildExerciseForPoint,
+  maskTerm,
+  chooseClozeToken,
+  estimateDifficulty,
+} from './training/exercise-generator'
+export { WeightedSelectionStrategy } from './training/selection-strategy'
+export type { ExerciseSelectionStrategy, SelectionInput } from './training/selection-strategy'
+export { SimpleScheduler } from './training/review-scheduler'
+export type { ReviewScheduler, Schedule } from './training/review-scheduler'
+export { AnswerEvaluator, normalizeAnswer, similarity } from './training/answer-evaluator'
+export { ReviewLog } from './training/review-log'
+export type { ReviewEvent } from './training/review-log'
 export { SettingsStore, CONFIG_FILENAME } from './settings/settings-store'

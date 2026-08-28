@@ -43,6 +43,7 @@ export class SettingsStore {
     const next: VaultSettings = {
       provider: { ...current.provider, ...(patch.provider ?? {}) },
       translation: { ...current.translation, ...(patch.translation ?? {}) },
+      training: { ...current.training, ...(patch.training ?? {}) },
     }
     const validated = VaultSettingsSchema.parse(next)
     await fs.mkdir(this.vaultPath, { recursive: true })

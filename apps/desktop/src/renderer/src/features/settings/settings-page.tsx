@@ -33,6 +33,7 @@ export function SettingsPage() {
   const [sourceLanguage, setSourceLanguage] = useState<SourceLanguage>(AUTO_DETECT)
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>('zh-CN')
   const [mode, setMode] = useState<TranslationMode>('natural')
+  const [dailySessionSize, setDailySessionSize] = useState('12')
   const [saved, setSaved] = useState(false)
 
   // Seed local form state once settings have loaded.
@@ -52,6 +53,7 @@ export function SettingsPage() {
     setSourceLanguage(settings.translation.sourceLanguage)
     setTargetLanguage(settings.translation.targetLanguage)
     setMode(settings.translation.mode)
+    setDailySessionSize(String(settings.training.dailySessionSize))
   }, [settingsQuery.data])
 
   const saveMutation = useMutation({
@@ -61,6 +63,10 @@ export function SettingsPage() {
       const maxRetries = Number(form.maxRetries)
       if (!Number.isFinite(timeoutMs) || !Number.isFinite(temperature) || !Number.isFinite(maxRetries)) {
         throw new Error('Timeout, temperature and retries must be numbers.')
+      }
+      const sessionSize = Number(dailySessionSize)
+      if (!Number.isFinite(sessionSize)) {
+        throw new Error('Daily session size must be a number.')
       }
       return api.settings.update({
         provider: {
@@ -72,6 +78,7 @@ export function SettingsPage() {
         },
         apiKey: form.apiKey.length > 0 ? form.apiKey : undefined,
         translation: { sourceLanguage, targetLanguage, mode },
+        training: { dailySessionSize: Math.round(sessionSize) },
       })
     },
     onSuccess: () => {
@@ -256,6 +263,25 @@ export function SettingsPage() {
               {chooseVaultMutation.isPending ? 'Opening…' : 'Change folder…'}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Training</CardTitle>
+          <CardDescription>Daily sessions mix due reviews, weak items, and new material.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-1.5">
+          <Label htmlFor="session-size">Exercises per day (6–30)</Label>
+          <Input
+            id="session-size"
+            type="number"
+            min={6}
+            max={30}
+            className="w-32"
+            value={dailySessionSize}
+            onChange={(event) => setDailySessionSize(event.target.value)}
+          />
         </CardContent>
       </Card>
 

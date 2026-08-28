@@ -1,6 +1,7 @@
 import type { SaveRequest, SaveResult, TranslateRequest, TranslateResult, GetRecordRequest } from './ipc'
 import type { HistoryPage, HistoryQuery, HistoryUpdate, IdRequest, StoredTranslationRecord } from './history'
 import type { GlossaryEntry, LearningPoint, MemoryPage, MemoryQuery, MemoryUpdate, TermRequest } from './memory'
+import type { SubmitAnswer, SubmitResult, TrainingSession } from './training'
 import type { SettingsView, UpdateSettings } from './settings'
 
 /**
@@ -36,6 +37,11 @@ export type AppApi = {
     list(): Promise<GlossaryEntry[]>
     add(request: GlossaryEntry): Promise<GlossaryEntry[]>
     remove(request: TermRequest): Promise<GlossaryEntry[]>
+  }
+  training: {
+    /** Today's session; generated on first access and persisted per day. */
+    getToday(): Promise<TrainingSession>
+    submit(request: SubmitAnswer): Promise<SubmitResult>
   }
   maintenance: {
     /** Rebuilds the derived search index from the Vault source files. */

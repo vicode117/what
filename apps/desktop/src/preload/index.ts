@@ -11,6 +11,7 @@ import type {
   MemoryUpdate,
   IpcResult,
   SaveRequest,
+  SubmitAnswer,
   TermRequest,
   TranslateRequest,
   UpdateSettings,
@@ -49,6 +50,10 @@ const api: AppApi = {
     list: () => invoke(IPC.glossaryList),
     add: (request: GlossaryEntry) => invoke(IPC.glossaryAdd, request),
     remove: (request: TermRequest) => invoke(IPC.glossaryRemove, request),
+  },
+  training: {
+    getToday: () => invoke(IPC.trainingGetToday),
+    submit: (request: SubmitAnswer) => invoke(IPC.trainingSubmit, request),
   },
   maintenance: {
     rebuildIndex: () => invoke(IPC.indexRebuild),

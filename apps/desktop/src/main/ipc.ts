@@ -13,12 +13,14 @@ import {
   MemoryUpdateSchema,
   IPC,
   SaveRequestSchema,
+  SubmitAnswerSchema,
   TermRequestSchema,
   TranslateRequestSchema,
   UpdateSettingsSchema,
 } from '@tt/contracts'
 import type { IpcResult, SettingsView } from '@tt/contracts'
 import {
+  AnswerEvaluator,
   HistoryService,
   LearningExtractor,
   LearningPointStore,
@@ -26,10 +28,14 @@ import {
   GlossaryStore,
   OpenAiCompatibleClient,
   PromptManager,
+  ReviewLog,
   SearchIndexService,
   SettingsStore,
+  SimpleScheduler,
+  TrainingService,
   TranslationService,
   TranslationStore,
+  WeightedSelectionStrategy,
   parseTranslationRecord,
 } from '@tt/core'
 import type { LlmClient } from '@tt/core'
@@ -58,7 +64,7 @@ export function registerIpcHandlers(): void {
   // The index is a long-lived derived cache; it is rebuilt automatically
   // when the Vault location changes.
   let indexCache: { vaultPath: string; index: SearchIndexService } | null = null
-  let memoryCache: { vaultPath: string; memory: MemoryService } | null = null
+  let memoryCache: { vaultPath: string; memory: MemoryService; points: LearningPointStore } | null = null
   function getIndex(): SearchIndexService {
     const vaultPath = getVaultPath()
     if (!indexCache || indexCache.vaultPath !== vaultPath) {
@@ -75,9 +81,46 @@ export function registerIpcHandlers(): void {
       memoryCache = {
         vaultPath,
         memory: new MemoryService(store, new LearningExtractor(prompts)),
+        points: store,
       }
     }
     return memoryCache.memory
+  }
+  function getPoints(): LearningPointStore {
+    getMemory()
+    return memoryCache!.points
+  }
+
+  /** AI client for optional enhancement paths; null when no key is set. */
+  async function createClientOrNull(): Promise<LlmClient | null> {
+    const vaultPath = getVaultPath()
+    const vaultSettings = await new SettingsStore(vaultPath).get()
+    const apiKey = await credentials.load()
+    if (!apiKey) return null
+    return new OpenAiCompatibleClient({
+      baseUrl: vaultSettings.provider.baseUrl,
+      apiKey,
+      model: vaultSettings.provider.model,
+      temperature: vaultSettings.provider.temperature,
+      timeoutMs: vaultSettings.provider.timeoutMs,
+      maxRetries: vaultSettings.provider.maxRetries,
+    })
+  }
+
+  function getTraining(): TrainingService {
+    const vaultPath = getVaultPath()
+    return new TrainingService({
+      points: getPoints(),
+      history: new HistoryService(new TranslationStore(vaultPath), getIndex()),
+      scheduler: new SimpleScheduler(),
+      strategy: new WeightedSelectionStrategy(),
+      evaluator: new AnswerEvaluator({
+        prompts: new PromptManager([path.join(vaultPath, 'prompts'), builtinPromptsDir()]),
+        clientProvider: createClientOrNull,
+      }),
+      reviewLog: new ReviewLog(vaultPath),
+      sessionsDir: path.join(vaultPath, 'training', 'sessions'),
+    })
   }
 
   async function refreshIndexFiles(files: string[]): Promise<void> {
@@ -226,6 +269,16 @@ export function registerIpcHandlers(): void {
   handle(IPC.glossaryRemove, async (payload) => {
     const request = TermRequestSchema.parse(payload)
     return new GlossaryStore(getVaultPath()).remove(request.term)
+  })
+
+  handle(IPC.trainingGetToday, async () => {
+    const vaultSettings = await new SettingsStore(getVaultPath()).get()
+    return getTraining().getToday({ targetSize: vaultSettings.training.dailySessionSize })
+  })
+
+  handle(IPC.trainingSubmit, async (payload) => {
+    const request = SubmitAnswerSchema.parse(payload)
+    return getTraining().submit(request)
   })
 
   handle(IPC.indexRebuild, async () => {

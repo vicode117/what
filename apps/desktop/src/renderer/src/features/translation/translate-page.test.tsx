@@ -18,9 +18,10 @@ const settingsView: SettingsView = {
     maxRetries: 2,
   },
   translation: { sourceLanguage: 'auto', targetLanguage: 'zh-CN', mode: 'natural' },
+  training: { dailySessionSize: 12 },
 }
 
-function makeApi(overrides: Partial<AppApi> = {}): AppApi {
+function makeApi(): AppApi {
   return {
     translation: {
       translate: vi.fn(async () => ({
@@ -49,6 +50,24 @@ function makeApi(overrides: Partial<AppApi> = {}): AppApi {
       add: vi.fn(async () => []),
       remove: vi.fn(async () => []),
     },
+    training: {
+      getToday: vi.fn(async () => ({
+        sessionId: 'sess_2026-08-29',
+        date: '2026-08-29',
+        createdAt: '2026-08-29T00:00:00.000Z',
+        exercises: [],
+        results: {},
+      })),
+      submit: vi.fn(async () => ({
+        exerciseId: 'ex1',
+        result: 'correct' as const,
+        feedback: '',
+        importantDifferences: [],
+        referenceAnswer: '',
+        explanation: '',
+        feedbackSource: 'heuristic' as const,
+      })),
+    },
     maintenance: {
       rebuildIndex: vi.fn(async () => ({ count: 0 })),
     },
@@ -57,7 +76,6 @@ function makeApi(overrides: Partial<AppApi> = {}): AppApi {
       update: vi.fn(async () => settingsView),
       chooseVault: vi.fn(async () => null),
     },
-    ...overrides,
   }
 }
 

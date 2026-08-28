@@ -9,6 +9,7 @@ import type {
   MemoryQuery,
   MemoryUpdate,
   SaveRequest,
+  SubmitAnswer,
   TermRequest,
   TranslateRequest,
   UpdateSettings,
@@ -40,6 +41,10 @@ export const api = {
     list: () => window.app.glossary.list(),
     add: (request: GlossaryEntry) => window.app.glossary.add(request),
     remove: (request: TermRequest) => window.app.glossary.remove(request),
+  },
+  training: {
+    getToday: () => window.app.training.getToday(),
+    submit: (request: SubmitAnswer) => window.app.training.submit(request),
   },
   maintenance: {
     rebuildIndex: () => window.app.maintenance.rebuildIndex(),

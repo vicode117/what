@@ -3,6 +3,7 @@ import { TranslatePage } from './features/translation/translate-page'
 import { HistoryPage } from './features/history/history-page'
 import { RecordPage } from './features/history/record-page'
 import { MemoryPage } from './features/memory/memory-page'
+import { TrainingPage } from './features/training/training-page'
 import { SettingsPage } from './features/settings/settings-page'
 
 function navLinkClass({ isActive }: { isActive: boolean }): string {
@@ -27,6 +28,9 @@ export function App() {
               <NavLink to="/history" end className={navLinkClass}>
                 History
               </NavLink>
+              <NavLink to="/training" className={navLinkClass}>
+                Training
+              </NavLink>
               <NavLink to="/memory" className={navLinkClass}>
                 Memory
               </NavLink>
@@ -42,6 +46,7 @@ export function App() {
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/record/:id" element={<RecordPage />} />
             <Route path="/memory" element={<MemoryPage />} />
+            <Route path="/training" element={<TrainingPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -28,10 +28,17 @@ export const TranslationDefaultsSchema = z.object({
 
 export type TranslationDefaults = z.infer<typeof TranslationDefaultsSchema>
 
+export const TrainingSettingsSchema = z.object({
+  dailySessionSize: z.number().int().min(6).max(30).default(12),
+})
+
+export type TrainingSettings = z.infer<typeof TrainingSettingsSchema>
+
 /** Settings persisted in `<vault>/config.json` (no secrets). */
 export const VaultSettingsSchema = z.object({
   provider: ProviderConfigSchema.prefault({}),
   translation: TranslationDefaultsSchema.prefault({}),
+  training: TrainingSettingsSchema.prefault({}),
 })
 
 export type VaultSettings = z.infer<typeof VaultSettingsSchema>
@@ -42,6 +49,7 @@ export const UpdateSettingsSchema = z.object({
   apiKey: z.string().min(1).max(1000).optional(),
   vaultPath: z.string().min(1).optional(),
   translation: TranslationDefaultsSchema.partial().optional(),
+  training: TrainingSettingsSchema.partial().optional(),
 })
 
 export type UpdateSettings = z.infer<typeof UpdateSettingsSchema>

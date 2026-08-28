@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
 import { AppError } from '@tt/contracts'
 import type { GenerationRequest, GenerationResult, LlmClient } from '../ai/llm-client'
+import type { ContextRetriever } from './context-retriever'
 import { PromptManager } from '../prompts/prompt-manager'
 import { TranslationService } from './translation-service'
 
@@ -81,6 +82,26 @@ describe('TranslationService', () => {
     const naturalPrompt = first.generate.mock.calls[0]![0].messages[0]!.content
     const literalPrompt = second.generate.mock.calls[0]![0].messages[0]!.content
     expect(naturalPrompt).not.toBe(literalPrompt)
+  })
+
+  it('injects translation-memory context into the prompt when a retriever is provided', async () => {
+    const prompts = new PromptManager([repoPromptsDir])
+    await prompts.load()
+    const service = new TranslationService(prompts, {
+      retrieve: async () => ({
+        glossary: [],
+        similar: [],
+        text: 'Glossary (use exactly these translations):\n- work order → 工单',
+      }),
+    } as unknown as ContextRetriever)
+    const { client, generate } = stubClient()
+
+    await service.translate(
+      { text: 'Please create a work order.', sourceLanguage: 'en', targetLanguage: 'zh-CN', mode: 'natural' },
+      client,
+    )
+
+    expect(generate.mock.calls[0]![0].messages[0]!.content).toContain('- work order → 工单')
   })
 
   it('propagates typed errors from the client', async () => {

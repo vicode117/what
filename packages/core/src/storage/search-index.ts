@@ -202,6 +202,30 @@ export class SearchIndexService {
     return { items, total: matches.length }
   }
 
+  /**
+   * Best-overlap similarity for translation-memory context. Unlike the
+   * AND search above, partial coverage is ranked, not filtered out.
+   */
+  async similar(text: string, limit = 3, minCoverage = 0.2): Promise<StoredTranslationRecord[]> {
+    await this.ensure()
+    const tokens = tokenize(text).slice(0, 12)
+    if (tokens.length === 0) return []
+    const scored: { entry: SearchIndexEntry; coverage: number }[] = []
+    for (const entry of this.entries.values()) {
+      if (entry.deletedAt !== null) continue
+      const source = entry.sourceText.toLowerCase()
+      const haystack = entryHaystack(entry)
+      let hits = 0
+      for (const token of tokens) {
+        if (source.includes(token) || haystack.includes(token)) hits += 1
+      }
+      const coverage = hits / tokens.length
+      if (coverage >= minCoverage) scored.push({ entry, coverage })
+    }
+    scored.sort((a, b) => b.coverage - a.coverage)
+    return scored.slice(0, limit).map(({ entry }) => fromEntry(entry))
+  }
+
   size(): number {
     return this.entries.size
   }

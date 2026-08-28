@@ -9,3 +9,9 @@ Requirements:
 - Keep formatting: line breaks, lists, and paragraphs stay in place.
 - If the source language is "auto-detect", determine it silently before translating.
 - Output ONLY the translated text. No explanations, no quotes around the translation, no notes.
+
+Optional context (may be "None."):
+
+{{context}}
+
+If the context includes glossary entries, use their translations exactly. Similar previous translations show this user's preferred phrasing — match their terminology and style.

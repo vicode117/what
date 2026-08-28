@@ -21,6 +21,7 @@ import {
 import type { IpcResult, SettingsView } from '@tt/contracts'
 import {
   AnswerEvaluator,
+  ContextRetriever,
   HistoryService,
   LearningExtractor,
   LearningPointStore,
@@ -176,10 +177,14 @@ export function registerIpcHandlers(): void {
     })
     const index = getIndex()
     const store = new TranslationStore(vaultPath)
+    const history = new HistoryService(store, index)
     return {
-      translation: new TranslationService(prompts),
+      translation: new TranslationService(
+        prompts,
+        new ContextRetriever({ glossary: new GlossaryStore(vaultPath), index }),
+      ),
       store,
-      history: new HistoryService(store, index),
+      history,
       client,
     }
   }

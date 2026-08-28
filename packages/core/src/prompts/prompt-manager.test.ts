@@ -44,17 +44,20 @@ describe('PromptManager', () => {
     const rendered = manager.render('translation/natural', {
       sourceLanguage: 'English',
       targetLanguage: 'Chinese (Simplified)',
+      context: 'None.',
     })
     expect(rendered).not.toContain('{{sourceLanguage}}')
+    expect(rendered).not.toContain('{{context}}')
     expect(rendered).toContain('from English into Chinese (Simplified)')
+    expect(rendered).toContain('None.')
   })
 
   it('throws a typed error for a missing variable', async () => {
     const manager = new PromptManager([repoPromptsDir])
     await manager.load()
-    expect(() => manager.render('translation/natural', { sourceLanguage: 'English' })).toThrow(
-      /missing variable "targetLanguage"/,
-    )
+    expect(() =>
+      manager.render('translation/natural', { sourceLanguage: 'English', targetLanguage: 'ZH' }),
+    ).toThrow(/missing variable "context"/)
   })
 
   it('throws a typed error for an unknown prompt key', async () => {
@@ -70,6 +73,7 @@ describe('PromptManager', () => {
     const rendered = manager.render('translation/natural', {
       sourceLanguage: 'EN',
       targetLanguage: 'ZH',
+      context: 'None.',
     })
     expect(rendered).toBe('OVERRIDE EN ZH')
     // Other modes still resolve from the built-in directory.

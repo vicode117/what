@@ -2,10 +2,14 @@ import { AppError } from '@tt/contracts'
 import type {
   ErrorCode,
   GetRecordRequest,
+  GlossaryEntry,
   HistoryQuery,
   HistoryUpdate,
   IdRequest,
+  MemoryQuery,
+  MemoryUpdate,
   SaveRequest,
+  TermRequest,
   TranslateRequest,
   UpdateSettings,
 } from '@tt/contracts'
@@ -25,6 +29,17 @@ export const api = {
     update: (request: HistoryUpdate) => window.app.history.update(request),
     delete: (request: IdRequest) => window.app.history.delete(request),
     restore: (request: IdRequest) => window.app.history.restore(request),
+    analyze: (request: IdRequest) => window.app.history.analyze(request),
+  },
+  memory: {
+    list: (request: MemoryQuery) => window.app.memory.list(request),
+    update: (request: MemoryUpdate) => window.app.memory.update(request),
+    delete: (request: IdRequest) => window.app.memory.delete(request),
+  },
+  glossary: {
+    list: () => window.app.glossary.list(),
+    add: (request: GlossaryEntry) => window.app.glossary.add(request),
+    remove: (request: TermRequest) => window.app.glossary.remove(request),
   },
   maintenance: {
     rebuildIndex: () => window.app.maintenance.rebuildIndex(),

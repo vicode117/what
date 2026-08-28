@@ -2,19 +2,28 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { app, dialog, ipcMain } from 'electron'
 import {
+  AppError,
   errorToPayload,
   GetRecordRequestSchema,
+  GlossaryEntrySchema,
   HistoryQuerySchema,
   HistoryUpdateSchema,
   IdRequestSchema,
+  MemoryQuerySchema,
+  MemoryUpdateSchema,
   IPC,
   SaveRequestSchema,
+  TermRequestSchema,
   TranslateRequestSchema,
   UpdateSettingsSchema,
 } from '@tt/contracts'
 import type { IpcResult, SettingsView } from '@tt/contracts'
 import {
   HistoryService,
+  LearningExtractor,
+  LearningPointStore,
+  MemoryService,
+  GlossaryStore,
   OpenAiCompatibleClient,
   PromptManager,
   SearchIndexService,
@@ -49,6 +58,7 @@ export function registerIpcHandlers(): void {
   // The index is a long-lived derived cache; it is rebuilt automatically
   // when the Vault location changes.
   let indexCache: { vaultPath: string; index: SearchIndexService } | null = null
+  let memoryCache: { vaultPath: string; memory: MemoryService } | null = null
   function getIndex(): SearchIndexService {
     const vaultPath = getVaultPath()
     if (!indexCache || indexCache.vaultPath !== vaultPath) {
@@ -56,6 +66,18 @@ export function registerIpcHandlers(): void {
       void watcher.watch(vaultPath).catch(() => undefined)
     }
     return indexCache.index
+  }
+  function getMemory(): MemoryService {
+    const vaultPath = getVaultPath()
+    if (!memoryCache || memoryCache.vaultPath !== vaultPath) {
+      const store = new LearningPointStore(vaultPath)
+      const prompts = new PromptManager([path.join(vaultPath, 'prompts'), builtinPromptsDir()])
+      memoryCache = {
+        vaultPath,
+        memory: new MemoryService(store, new LearningExtractor(prompts)),
+      }
+    }
+    return memoryCache.memory
   }
 
   async function refreshIndexFiles(files: string[]): Promise<void> {
@@ -162,6 +184,48 @@ export function registerIpcHandlers(): void {
     const request = IdRequestSchema.parse(payload)
     const services = await buildServices()
     return services.history.setDeleted(request.id, false)
+  })
+
+  handle(IPC.historyAnalyze, async (payload) => {
+    const request = IdRequestSchema.parse(payload)
+    const services = await buildServices()
+    const record = await services.history.get(request.id)
+    if (!record) {
+      throw new AppError('STORAGE_ERROR', `Record not found: ${request.id}`)
+    }
+    const { learningPointIds } = await getMemory().analyze(record, services.client)
+    const updated = await services.store.update(request.id, {
+      analyzedAt: new Date().toISOString(),
+    })
+    if (updated) await getIndex().upsert(updated)
+    return { learningPointIds }
+  })
+
+  handle(IPC.memoryList, async (payload) => {
+    const query = MemoryQuerySchema.parse(payload)
+    return getMemory().list(query)
+  })
+
+  handle(IPC.memoryUpdate, async (payload) => {
+    const request = MemoryUpdateSchema.parse(payload)
+    return getMemory().update(request.id, { status: request.status, notes: request.notes })
+  })
+
+  handle(IPC.memoryDelete, async (payload) => {
+    const request = IdRequestSchema.parse(payload)
+    return getMemory().delete(request.id)
+  })
+
+  handle(IPC.glossaryList, async () => new GlossaryStore(getVaultPath()).list())
+
+  handle(IPC.glossaryAdd, async (payload) => {
+    const request = GlossaryEntrySchema.parse(payload)
+    return new GlossaryStore(getVaultPath()).add(request)
+  })
+
+  handle(IPC.glossaryRemove, async (payload) => {
+    const request = TermRequestSchema.parse(payload)
+    return new GlossaryStore(getVaultPath()).remove(request.term)
   })
 
   handle(IPC.indexRebuild, async () => {

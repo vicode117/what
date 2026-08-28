@@ -1,5 +1,6 @@
 import type { SaveRequest, SaveResult, TranslateRequest, TranslateResult, GetRecordRequest } from './ipc'
 import type { HistoryPage, HistoryQuery, HistoryUpdate, IdRequest, StoredTranslationRecord } from './history'
+import type { GlossaryEntry, LearningPoint, MemoryPage, MemoryQuery, MemoryUpdate, TermRequest } from './memory'
 import type { SettingsView, UpdateSettings } from './settings'
 
 /**
@@ -23,6 +24,18 @@ export type AppApi = {
     /** Soft delete: the file stays in place and can be restored. */
     delete(request: IdRequest): Promise<StoredTranslationRecord | null>
     restore(request: IdRequest): Promise<StoredTranslationRecord | null>
+    /** Runs AI learning extraction for a record and merges the memory. */
+    analyze(request: IdRequest): Promise<{ learningPointIds: string[] }>
+  }
+  memory: {
+    list(request: MemoryQuery): Promise<MemoryPage>
+    update(request: MemoryUpdate): Promise<LearningPoint | null>
+    delete(request: IdRequest): Promise<boolean>
+  }
+  glossary: {
+    list(): Promise<GlossaryEntry[]>
+    add(request: GlossaryEntry): Promise<GlossaryEntry[]>
+    remove(request: TermRequest): Promise<GlossaryEntry[]>
   }
   maintenance: {
     /** Rebuilds the derived search index from the Vault source files. */

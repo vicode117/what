@@ -37,6 +37,17 @@ function makeApi(overrides: Partial<AppApi> = {}): AppApi {
       update: vi.fn(async () => null),
       delete: vi.fn(async () => null),
       restore: vi.fn(async () => null),
+      analyze: vi.fn(async () => ({ learningPointIds: [] })),
+    },
+    memory: {
+      list: vi.fn(async () => ({ items: [], total: 0 })),
+      update: vi.fn(async () => null),
+      delete: vi.fn(async () => false),
+    },
+    glossary: {
+      list: vi.fn(async () => []),
+      add: vi.fn(async () => []),
+      remove: vi.fn(async () => []),
     },
     maintenance: {
       rebuildIndex: vi.fn(async () => ({ count: 0 })),

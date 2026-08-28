@@ -233,6 +233,8 @@ export function RecordPage() {
         </Card>
       )}
 
+      <LearningPointsCard recordId={record.id} analyzedAt={record.analyzedAt} onAnalyzed={invalidate} />
+
       {!deleted && (
         <div>
           <Button variant="outline" size="sm" onClick={() => deleteMutation.mutate()}>
@@ -255,5 +257,67 @@ function Meta({ label, value, mono = false }: { label: string; value: string; mo
         {value}
       </span>
     </div>
+  )
+}
+
+function LearningPointsCard({
+  recordId,
+  analyzedAt,
+  onAnalyzed,
+}: {
+  recordId: string
+  analyzedAt: string | null
+  onAnalyzed: () => void
+}) {
+  const queryClient = useQueryClient()
+  const pointsQuery = useQuery({
+    queryKey: ['memory', { sourceTranslationId: recordId }],
+    queryFn: () => api.memory.list({ sourceTranslationId: recordId, limit: 50 }),
+  })
+
+  const analyzeMutation = useMutation({
+    mutationFn: () => api.history.analyze({ id: recordId }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['memory'] })
+      onAnalyzed()
+    },
+  })
+  const points = pointsQuery.data?.items ?? []
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between gap-2">
+        <CardTitle>Learning Points</CardTitle>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => analyzeMutation.mutate()}
+          disabled={analyzeMutation.isPending}
+        >
+          {analyzeMutation.isPending ? 'Analyzing…' : analyzedAt ? 'Re-analyze' : 'Extract learning points'}
+        </Button>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {analyzeMutation.error && (
+          <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {describeError(analyzeMutation.error)}
+          </div>
+        )}
+        {points.length === 0 && !analyzeMutation.isPending && (
+          <p className="text-muted-foreground text-sm">
+            {analyzedAt ? 'No learning points were extracted.' : 'Not analyzed yet — extraction uses your configured AI provider.'}
+          </p>
+        )}
+        <ul className="flex flex-col gap-1.5">
+          {points.map((point) => (
+            <li key={point.id} className="rounded-md border px-3 py-1.5 text-sm">
+              <span className="font-medium">{point.term}</span>
+              {point.meaning && <span className="text-muted-foreground"> — {point.meaning}</span>}
+              {point.explanation && <p className="text-muted-foreground text-xs">{point.explanation}</p>}
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   )
 }

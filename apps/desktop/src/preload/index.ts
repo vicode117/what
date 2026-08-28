@@ -3,6 +3,9 @@ import { AppError, IPC } from '@tt/contracts'
 import type {
   AppApi,
   GetRecordRequest,
+  HistoryQuery,
+  HistoryUpdate,
+  IdRequest,
   IpcResult,
   SaveRequest,
   TranslateRequest,
@@ -27,6 +30,13 @@ const api: AppApi = {
   },
   history: {
     get: (request: GetRecordRequest) => invoke(IPC.getRecord, request),
+    list: (request: HistoryQuery) => invoke(IPC.historyList, request),
+    update: (request: HistoryUpdate) => invoke(IPC.historyUpdate, request),
+    delete: (request: IdRequest) => invoke(IPC.historyDelete, request),
+    restore: (request: IdRequest) => invoke(IPC.historyRestore, request),
+  },
+  maintenance: {
+    rebuildIndex: () => invoke(IPC.indexRebuild),
   },
   settings: {
     get: () => invoke(IPC.settingsGet),

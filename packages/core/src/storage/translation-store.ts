@@ -46,6 +46,8 @@ export class TranslationStore {
       sourceText: draft.sourceText,
       aiTranslation: draft.aiTranslation,
       userTranslation: userEdited ? draft.userTranslation! : null,
+      analyzedAt: null,
+      deletedAt: null,
     }
 
     const filePath = this.filePathForId(id)
@@ -69,6 +71,39 @@ export class TranslationStore {
       return this.findByPrefix(id)
     }
     return { ...parseTranslationRecord(raw), filePath }
+  }
+
+  /**
+   * Rewrites an existing record file with an updated copy. Only known
+   * fields change; the AI translation and user correction are preserved.
+   */
+  async update(
+    id: string,
+    patch: {
+      tags?: string[]
+      notes?: string
+      analyzedAt?: string | null
+      deletedAt?: string | null
+    },
+  ): Promise<StoredTranslationRecord | null> {
+    const existing = await this.get(id)
+    if (!existing) return null
+    const next: TranslationRecord = {
+      ...existing,
+      tags: patch.tags ?? existing.tags,
+      notes: patch.notes ?? existing.notes,
+      analyzedAt: patch.analyzedAt !== undefined ? patch.analyzedAt : existing.analyzedAt,
+      deletedAt: patch.deletedAt !== undefined ? patch.deletedAt : existing.deletedAt,
+    }
+    try {
+      await fs.writeFile(existing.filePath, serializeTranslationRecord(next), 'utf8')
+    } catch (error) {
+      throw new AppError('STORAGE_ERROR', 'Failed to update translation file', {
+        path: existing.filePath,
+        cause: error instanceof Error ? error.message : String(error),
+      })
+    }
+    return { ...next, filePath: existing.filePath }
   }
 
   /**

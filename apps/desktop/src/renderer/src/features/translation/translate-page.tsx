@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { AUTO_DETECT, LANGUAGES, TRANSLATION_MODES } from '@tt/contracts'
 import type { LanguageCode, SourceLanguage, TranslateResult, TranslationMode } from '@tt/contracts'
 import { Badge } from '../../components/ui/badge'
@@ -22,6 +22,8 @@ const MODE_LABELS: Record<TranslationMode, string> = {
 
 export function TranslatePage() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const retranslateId = searchParams.get('retranslate')
 
   const [sourceText, setSourceText] = useState('')
   const [sourceLanguage, setSourceLanguage] = useState<SourceLanguage>(AUTO_DETECT)
@@ -54,6 +56,21 @@ export function TranslatePage() {
       initialRef.current = true
     }
   }, [settingsQuery.data])
+
+  // Re-translate: prefill from a saved record (user asked for it explicitly).
+  useEffect(() => {
+    if (!retranslateId) return
+    void api.history.get({ id: retranslateId }).then((record) => {
+      if (record) {
+        setSourceText(record.sourceText)
+        setSourceLanguage(record.sourceLanguage)
+        setTargetLanguage(record.targetLanguage)
+        setMode(record.mode)
+      }
+      setSearchParams({}, { replace: true })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retranslateId])
 
   const translateMutation = useMutation({
     mutationFn: () => api.translation.translate({ text: sourceText, sourceLanguage, targetLanguage, mode }),

@@ -31,7 +31,16 @@ function makeApi(overrides: Partial<AppApi> = {}): AppApi {
       })),
       save: vi.fn(async () => ({ id: 'tr_20260829_001', filePath: 'C:/vault/tr_20260829_001.md' })),
     },
-    history: { get: vi.fn(async () => null) },
+    history: {
+      get: vi.fn(async () => null),
+      list: vi.fn(async () => ({ items: [], total: 0 })),
+      update: vi.fn(async () => null),
+      delete: vi.fn(async () => null),
+      restore: vi.fn(async () => null),
+    },
+    maintenance: {
+      rebuildIndex: vi.fn(async () => ({ count: 0 })),
+    },
     settings: {
       get: vi.fn(async () => settingsView),
       update: vi.fn(async () => settingsView),

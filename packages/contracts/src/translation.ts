@@ -29,12 +29,13 @@ export const TranslationRecordSchema = z.object({
   sourceText: z.string().min(1),
   aiTranslation: z.string().min(1),
   userTranslation: z.string().min(1).nullable().default(null),
+  /** Set once learning extraction has run for this record. */
+  analyzedAt: z.string().nullable().default(null),
+  /** Soft delete: the file stays in place and can be restored. */
+  deletedAt: z.string().nullable().default(null),
 })
 
 export type TranslationRecord = z.infer<typeof TranslationRecordSchema>
-
-/** Record plus the on-disk path it was loaded from. */
-export type StoredTranslationRecord = TranslationRecord & { filePath: string }
 
 /** The translation the user actually ended up with (final text). */
 export function finalTranslation(record: Pick<TranslationRecord, 'aiTranslation' | 'userTranslation'>): string {

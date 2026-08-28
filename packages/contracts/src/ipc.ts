@@ -7,9 +7,14 @@ export const IPC = {
   translate: 'translation:translate',
   save: 'translation:save',
   getRecord: 'history:get',
+  historyList: 'history:list',
+  historyUpdate: 'history:update',
+  historyDelete: 'history:delete',
+  historyRestore: 'history:restore',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
   settingsChooseVault: 'settings:choose-vault',
+  indexRebuild: 'index:rebuild',
 } as const
 
 /** Every IPC reply is an explicit result envelope — never a thrown raw error. */

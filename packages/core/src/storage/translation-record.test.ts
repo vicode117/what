@@ -15,6 +15,8 @@ const base = {
   sourceText: 'The application should remain maintainable over time.',
   aiTranslation: '这个应用应该能够长期保持可维护性。',
   userTranslation: null,
+  analyzedAt: null,
+  deletedAt: null,
 }
 
 describe('serializeTranslationRecord / parseTranslationRecord', () => {

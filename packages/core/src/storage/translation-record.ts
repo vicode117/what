@@ -16,6 +16,8 @@ const RecordMetaSchema = z.object({
   model: z.string().min(1),
   tags: z.array(z.string()).default([]),
   edited: z.boolean().default(false),
+  analyzedAt: z.string().nullable().default(null),
+  deletedAt: z.string().nullable().default(null),
 })
 
 /**
@@ -39,6 +41,8 @@ export function serializeTranslationRecord(record: TranslationRecord): string {
     tags: record.tags,
     edited,
   }
+  if (record.analyzedAt !== null) frontmatter['analyzedAt'] = record.analyzedAt
+  if (record.deletedAt !== null) frontmatter['deletedAt'] = record.deletedAt
 
   const sections: { heading: string; content: string }[] = [
     { heading: 'Source', content: record.sourceText },

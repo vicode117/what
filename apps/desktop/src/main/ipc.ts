@@ -1,11 +1,32 @@
+import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { app, dialog, ipcMain } from 'electron'
-import { errorToPayload, GetRecordRequestSchema, IPC, SaveRequestSchema, TranslateRequestSchema, UpdateSettingsSchema } from '@tt/contracts'
+import {
+  errorToPayload,
+  GetRecordRequestSchema,
+  HistoryQuerySchema,
+  HistoryUpdateSchema,
+  IdRequestSchema,
+  IPC,
+  SaveRequestSchema,
+  TranslateRequestSchema,
+  UpdateSettingsSchema,
+} from '@tt/contracts'
 import type { IpcResult, SettingsView } from '@tt/contracts'
-import { OpenAiCompatibleClient, PromptManager, SettingsStore, TranslationService, TranslationStore } from '@tt/core'
+import {
+  HistoryService,
+  OpenAiCompatibleClient,
+  PromptManager,
+  SearchIndexService,
+  SettingsStore,
+  TranslationService,
+  TranslationStore,
+  parseTranslationRecord,
+} from '@tt/core'
 import type { LlmClient } from '@tt/core'
 import { SafeCredentialStore } from './credentials'
 import { builtinPromptsDir } from './paths'
+import { VaultWatcher } from './watcher'
 import { getVaultPath, setVaultPath } from './vault'
 
 function handle<T>(channel: string, fn: (payload: unknown) => Promise<T>): void {
@@ -23,6 +44,47 @@ function handle<T>(channel: string, fn: (payload: unknown) => Promise<T>): void 
 
 export function registerIpcHandlers(): void {
   const credentials = new SafeCredentialStore(() => app.getPath('userData'))
+  const watcher = new VaultWatcher((files) => void refreshIndexFiles(files))
+
+  // The index is a long-lived derived cache; it is rebuilt automatically
+  // when the Vault location changes.
+  let indexCache: { vaultPath: string; index: SearchIndexService } | null = null
+  function getIndex(): SearchIndexService {
+    const vaultPath = getVaultPath()
+    if (!indexCache || indexCache.vaultPath !== vaultPath) {
+      indexCache = { vaultPath, index: new SearchIndexService(vaultPath) }
+      void watcher.watch(vaultPath).catch(() => undefined)
+    }
+    return indexCache.index
+  }
+
+  async function refreshIndexFiles(files: string[]): Promise<void> {
+    const index = getIndex()
+    for (const file of files) {
+      if (!file.endsWith('.md')) continue
+      try {
+        const raw = await fs.readFile(file, 'utf8')
+        const record = parseTranslationRecord(raw)
+        await index.upsert({ ...record, filePath: file })
+      } catch {
+        // Missing file (deleted externally) or unreadable content.
+        try {
+          await fs.access(file)
+        } catch {
+          await index.removeByFilePath(file)
+        }
+      }
+    }
+  }
+
+  async function settingsView(): Promise<SettingsView> {
+    const vaultPath = getVaultPath()
+    const [vaultSettings, apiKey] = await Promise.all([
+      new SettingsStore(vaultPath).get(),
+      credentials.load(),
+    ])
+    return { ...vaultSettings, vaultPath, hasApiKey: apiKey !== null }
+  }
 
   /**
    * Services are built per request so a vault change or settings update
@@ -31,6 +93,7 @@ export function registerIpcHandlers(): void {
   async function buildServices(): Promise<{
     translation: TranslationService
     store: TranslationStore
+    history: HistoryService
     client: LlmClient
   }> {
     const vaultPath = getVaultPath()
@@ -46,20 +109,14 @@ export function registerIpcHandlers(): void {
       timeoutMs: vaultSettings.provider.timeoutMs,
       maxRetries: vaultSettings.provider.maxRetries,
     })
+    const index = getIndex()
+    const store = new TranslationStore(vaultPath)
     return {
       translation: new TranslationService(prompts),
-      store: new TranslationStore(vaultPath),
+      store,
+      history: new HistoryService(store, index),
       client,
     }
-  }
-
-  async function settingsView(): Promise<SettingsView> {
-    const vaultPath = getVaultPath()
-    const [vaultSettings, apiKey] = await Promise.all([
-      new SettingsStore(vaultPath).get(),
-      credentials.load(),
-    ])
-    return { ...vaultSettings, vaultPath, hasApiKey: apiKey !== null }
   }
 
   handle(IPC.translate, async (payload) => {
@@ -71,13 +128,45 @@ export function registerIpcHandlers(): void {
   handle(IPC.save, async (payload) => {
     const request = SaveRequestSchema.parse(payload)
     const services = await buildServices()
-    return services.store.save(request)
+    const saved = await services.store.save(request)
+    const record = await services.store.get(saved.id)
+    if (record) await getIndex().upsert(record)
+    return saved
   })
 
   handle(IPC.getRecord, async (payload) => {
     const request = GetRecordRequestSchema.parse(payload)
     const services = await buildServices()
-    return services.store.get(request.id)
+    return services.history.get(request.id)
+  })
+
+  handle(IPC.historyList, async (payload) => {
+    const query = HistoryQuerySchema.parse(payload)
+    const services = await buildServices()
+    return services.history.list(query)
+  })
+
+  handle(IPC.historyUpdate, async (payload) => {
+    const request = HistoryUpdateSchema.parse(payload)
+    const services = await buildServices()
+    return services.history.updateMeta(request.id, { tags: request.tags, notes: request.notes })
+  })
+
+  handle(IPC.historyDelete, async (payload) => {
+    const request = IdRequestSchema.parse(payload)
+    const services = await buildServices()
+    return services.history.setDeleted(request.id, true)
+  })
+
+  handle(IPC.historyRestore, async (payload) => {
+    const request = IdRequestSchema.parse(payload)
+    const services = await buildServices()
+    return services.history.setDeleted(request.id, false)
+  })
+
+  handle(IPC.indexRebuild, async () => {
+    const count = await getIndex().rebuild()
+    return { count }
   })
 
   handle(IPC.settingsGet, async () => settingsView())

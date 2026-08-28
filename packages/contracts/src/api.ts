@@ -1,5 +1,5 @@
 import type { SaveRequest, SaveResult, TranslateRequest, TranslateResult, GetRecordRequest } from './ipc'
-import type { StoredTranslationRecord } from './translation'
+import type { HistoryPage, HistoryQuery, HistoryUpdate, IdRequest, StoredTranslationRecord } from './history'
 import type { SettingsView, UpdateSettings } from './settings'
 
 /**
@@ -18,6 +18,15 @@ export type AppApi = {
   history: {
     /** Returns null when no record with that id exists. */
     get(request: GetRecordRequest): Promise<StoredTranslationRecord | null>
+    list(request: HistoryQuery): Promise<HistoryPage>
+    update(request: HistoryUpdate): Promise<StoredTranslationRecord | null>
+    /** Soft delete: the file stays in place and can be restored. */
+    delete(request: IdRequest): Promise<StoredTranslationRecord | null>
+    restore(request: IdRequest): Promise<StoredTranslationRecord | null>
+  }
+  maintenance: {
+    /** Rebuilds the derived search index from the Vault source files. */
+    rebuildIndex(): Promise<{ count: number }>
   }
   settings: {
     get(): Promise<SettingsView>

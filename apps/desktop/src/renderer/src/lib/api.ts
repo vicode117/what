@@ -1,5 +1,14 @@
 import { AppError } from '@tt/contracts'
-import type { ErrorCode, GetRecordRequest, SaveRequest, TranslateRequest, UpdateSettings } from '@tt/contracts'
+import type {
+  ErrorCode,
+  GetRecordRequest,
+  HistoryQuery,
+  HistoryUpdate,
+  IdRequest,
+  SaveRequest,
+  TranslateRequest,
+  UpdateSettings,
+} from '@tt/contracts'
 
 /**
  * Thin typed client over the contextBridge surface. TanStack Query
@@ -12,6 +21,13 @@ export const api = {
   },
   history: {
     get: (request: GetRecordRequest) => window.app.history.get(request),
+    list: (request: HistoryQuery) => window.app.history.list(request),
+    update: (request: HistoryUpdate) => window.app.history.update(request),
+    delete: (request: IdRequest) => window.app.history.delete(request),
+    restore: (request: IdRequest) => window.app.history.restore(request),
+  },
+  maintenance: {
+    rebuildIndex: () => window.app.maintenance.rebuildIndex(),
   },
   settings: {
     get: () => window.app.settings.get(),

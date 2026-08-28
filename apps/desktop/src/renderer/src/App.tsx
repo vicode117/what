@@ -1,5 +1,6 @@
 import { NavLink, Navigate, Route, Routes, HashRouter as Router } from 'react-router'
 import { TranslatePage } from './features/translation/translate-page'
+import { HistoryPage } from './features/history/history-page'
 import { RecordPage } from './features/history/record-page'
 import { SettingsPage } from './features/settings/settings-page'
 
@@ -22,6 +23,9 @@ export function App() {
               <NavLink to="/" end className={navLinkClass}>
                 Translate
               </NavLink>
+              <NavLink to="/history" end className={navLinkClass}>
+                History
+              </NavLink>
               <NavLink to="/settings" className={navLinkClass}>
                 Settings
               </NavLink>
@@ -31,6 +35,7 @@ export function App() {
         <main className="flex-1 overflow-y-auto">
           <Routes>
             <Route path="/" element={<TranslatePage />} />
+            <Route path="/history" element={<HistoryPage />} />
             <Route path="/record/:id" element={<RecordPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

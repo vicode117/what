@@ -87,6 +87,11 @@ export function SettingsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['settings'] }),
   })
 
+  const rebuildIndexMutation = useMutation({
+    mutationFn: api.maintenance.rebuildIndex,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['history'] }),
+  })
+
   const settings = settingsQuery.data
 
   if (settingsQuery.isPending || !settings || !provider) {
@@ -251,6 +256,31 @@ export function SettingsPage() {
               {chooseVaultMutation.isPending ? 'Opening…' : 'Change folder…'}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Maintenance</CardTitle>
+          <CardDescription>
+            The search index under <code>.app/</code> is derived data — rebuilding it never touches
+            your Markdown files.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            onClick={() => rebuildIndexMutation.mutate()}
+            disabled={rebuildIndexMutation.isPending}
+          >
+            {rebuildIndexMutation.isPending ? 'Rebuilding…' : 'Rebuild search index'}
+          </Button>
+          {rebuildIndexMutation.data && (
+            <span className="text-muted-foreground text-sm">{rebuildIndexMutation.data.count} records indexed</span>
+          )}
+          {rebuildIndexMutation.error && (
+            <span className="text-sm text-destructive">{describeError(rebuildIndexMutation.error)}</span>
+          )}
         </CardContent>
       </Card>
 

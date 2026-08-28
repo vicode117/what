@@ -1,0 +1,13 @@
+appId: dev.translatetrainer.desktop
+productName: TranslateTrainer
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+extraResources:
+  - from: ../../prompts
+    to: prompts
+    filter:
+      - '**/*.md'
+asar: true

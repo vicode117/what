@@ -1,0 +1,15 @@
+packages:
+  - apps/*
+  - packages/*
+
+allowBuilds:
+  electron: true
+  electron-winstaller: false
+  esbuild: true
+
+# app-builder-lib 26 expects ElectronDownloadCacheMode from @electron/get,
+# which only exists in 3.1+. Keep electron's own 2.x untouched via the
+# parent-scoped selector.
+overrides:
+  'app-builder-lib>@electron/get': ^3.1.0
+

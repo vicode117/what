@@ -82,12 +82,14 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build installer
         shell: bash
+        working-directory: apps/desktop
         run: |
           set -o pipefail
           pnpm dist:installer 2>&1 | tee build.log
       - name: Surface build errors
         if: failure()
         shell: bash
+        working-directory: apps/desktop
         run: |
           tail -10 build.log 2>/dev/null | while IFS= read -r line; do
             echo "::error::$line"

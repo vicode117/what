@@ -14,7 +14,7 @@ const settingsView: SettingsView = {
       id: 'prov_default',
       label: 'Default',
       baseUrl: 'https://api.example.com/v1',
-      model: 'example-model',
+      models: ['example-model'],
       timeoutMs: 60000,
       temperature: 0.3,
       maxRetries: 2,
@@ -51,6 +51,14 @@ function makeApi(): AppApi {
       }),
       cancelTranslate: vi.fn(),
       save: vi.fn(async () => ({ id: 'tr_20260829_001', filePath: 'C:/vault/tr_20260829_001.md' })),
+    },
+    providers: {
+      test: vi.fn(async () => ({
+        ok: true,
+        model: 'example-model',
+        latencyMs: 120,
+        attempts: [{ model: 'example-model', ok: true }],
+      })),
     },
     history: {
       get: vi.fn(async () => null),

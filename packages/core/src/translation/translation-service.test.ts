@@ -31,8 +31,8 @@ function stubClient(overrides: {
   return client
 }
 
-function provider(label: string, client: LlmClient): ProviderRuntime {
-  return { id: `id-${label}`, label, client }
+function provider(label: string, client: LlmClient, models: string[] = ['example-model']): ProviderRuntime {
+  return { id: `id-${label}`, label, models, client }
 }
 
 async function makeService(): Promise<TranslationService> {
@@ -169,7 +169,7 @@ describe('TranslationService', () => {
       const error = await service.translate(request, providers).catch((e: unknown) => e)
       expect(error).toBeInstanceOf(AppError)
       expect((error as AppError).code).toBe('AUTH_ERROR')
-      expect((error as AppError).message).toContain('All 2 provider(s) failed')
+      expect((error as AppError).message).toContain('All 2 provider/model combo(s) failed')
     })
 
     it('throws CONFIG_ERROR when no provider is configured', async () => {

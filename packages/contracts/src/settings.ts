@@ -18,12 +18,16 @@ export const ProviderConfigSchema = z.object({
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>
 
-/** A configurable model provider. Array order = priority order. */
+/**
+ * A configurable model provider. Array order = priority order.
+ * `models` is an ordered list — attempts run provider-major,
+ * model-minor (P1/M1 → P1/M2 → P2/M1 …).
+ */
 export const ProviderProfileSchema = z.object({
   id: z.string().min(1).max(64),
   label: z.string().min(1).max(80),
   baseUrl: z.url(),
-  model: z.string().min(1).max(200),
+  models: z.array(z.string().min(1).max(200)).min(1).max(20),
   timeoutMs: z.number().int().min(1000).max(300000).default(60000),
   temperature: z.number().min(0).max(2).default(0.3),
   maxRetries: z.number().int().min(0).max(10).default(2),
@@ -41,6 +45,9 @@ export const ProviderProfilesSchema = z
         ctx.addIssue({ code: 'custom', message: `Duplicate provider id: ${provider.id}`, path: [index, 'id'] })
       }
       seen.add(provider.id)
+      if (provider.models.length === 0) {
+        ctx.addIssue({ code: 'custom', message: `Provider "${provider.label}" needs at least one model`, path: [index, 'models'] })
+      }
     }
   })
 

@@ -23,6 +23,7 @@ export const IPC = {
   glossaryRemove: 'glossary:remove',
   trainingGetToday: 'training:get-today',
   trainingSubmit: 'training:submit',
+  providerTest: 'provider:test',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
   settingsChooseVault: 'settings:choose-vault',
@@ -64,11 +65,38 @@ export const TranslateResultSchema = z.object({
   translatedText: z.string().min(1),
   provider: z.string().min(1),
   model: z.string().min(1),
+  /** Id of the provider profile that served the request (failover indicator). */
+  providerId: z.string().optional(),
   usage: UsageSchema.optional(),
   durationMs: z.number().int().min(0),
 })
 
 export type TranslateResult = z.infer<typeof TranslateResultSchema>
+
+/** Lightweight connectivity/model test for the settings page. */
+export const TestProviderRequestSchema = z.object({
+  /** When set and no apiKey is pasted, the stored key for this id is used. */
+  providerId: z.string().min(1).max(64).optional(),
+  baseUrl: z.url(),
+  models: z.array(z.string().min(1).max(200)).min(1).max(20),
+  apiKey: z.string().min(1).max(1000).optional(),
+  timeoutMs: z.number().int().min(1000).max(120000).default(15000),
+})
+
+export type TestProviderRequest = z.infer<typeof TestProviderRequestSchema>
+
+export const TestProviderResultSchema = z.object({
+  ok: z.boolean(),
+  /** The model that answered, when one succeeded. */
+  model: z.string().optional(),
+  latencyMs: z.number().int().min(0),
+  /** Per-model outcomes, in attempt order (no message content). */
+  attempts: z
+    .array(z.object({ model: z.string(), ok: z.boolean(), code: z.string().optional(), message: z.string().optional() }))
+    .default([]),
+})
+
+export type TestProviderResult = z.infer<typeof TestProviderResultSchema>
 
 export const SaveRequestSchema = z.object({
   sourceText: z.string().min(1).max(50000),

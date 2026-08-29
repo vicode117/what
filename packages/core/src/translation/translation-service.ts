@@ -9,11 +9,13 @@ import type { ContextRetriever } from './context-retriever'
 export type ProviderRuntime = {
   id: string
   label: string
+  /** Ordered models — attempts run provider-major, model-minor. */
+  models: string[]
   client: LlmClient
 }
 
 /**
- * Errors worth falling through to the next provider for. Request-side
+ * Errors worth falling through to the next provider/model for. Request-side
  * problems (validation, missing prompts) are not — they would fail on
  * every provider equally.
  */
@@ -26,12 +28,35 @@ export const FAILOVER_ERROR_CODES: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
   'PROVIDER_ERROR',
 ])
 
+type Attempt = { provider: ProviderRuntime; model: string }
+
+function attemptOrder(providers: ProviderRuntime[]): Attempt[] {
+  return providers.flatMap((provider) => provider.models.map((model) => ({ provider, model })))
+}
+
+function isFailoverable(error: unknown): boolean {
+  return error instanceof AppError && FAILOVER_ERROR_CODES.has(error.code)
+}
+
+function wrapAllProvidersFailed(lastError: unknown, attempts: Attempt[]): AppError {
+  const last = lastError instanceof AppError ? lastError : undefined
+  const trail = attempts.map((attempt) => `${attempt.provider.label}/${attempt.model}`)
+  if (last) {
+    return new AppError(
+      last.code,
+      `All ${attempts.length} provider/model combo(s) failed — last error (${last.code}): ${last.message}`,
+      { attempts: trail },
+    )
+  }
+  return new AppError('CONFIG_ERROR', 'No AI provider/model was attempted', { attempts: trail })
+}
+
 /**
  * Builds the translation prompt from version-controlled Markdown
  * templates — enriched with translation-memory context when a
  * retriever is provided — and runs generation through the configured
- * providers in priority order: the first success wins; retryable
- * failures fall through to the next provider.
+ * provider×model combos in priority order: the first success wins;
+ * retryable failures switch to the next combo immediately.
  */
 export class TranslationService {
   constructor(
@@ -45,15 +70,20 @@ export class TranslationService {
       { role: 'system' as const, content: systemPrompt },
       { role: 'user' as const, content: request.text },
     ]
+    const attempts = attemptOrder(providers)
+    if (attempts.length === 0) {
+      throw new AppError('CONFIG_ERROR', 'No AI provider/model configured')
+    }
 
     let lastError: unknown
-    for (const provider of providers) {
+    for (const { provider, model } of attempts) {
       try {
         const startedAt = Date.now()
-        const result: GenerationResult = await provider.client.generate({ messages })
+        const result: GenerationResult = await provider.client.generate({ messages, model })
         return {
           translatedText: result.text.trim(),
           provider: provider.label,
+          providerId: provider.id,
           model: result.model,
           usage: result.usage,
           durationMs: Date.now() - startedAt,
@@ -63,7 +93,7 @@ export class TranslationService {
         if (!isFailoverable(error)) throw error
       }
     }
-    throw wrapAllProvidersFailed(lastError, providers)
+    throw wrapAllProvidersFailed(lastError, attempts)
   }
 
   /**
@@ -85,29 +115,33 @@ export class TranslationService {
       { role: 'system' as const, content: systemPrompt },
       { role: 'user' as const, content: request.text },
     ]
+    const attempts = attemptOrder(providers)
+    if (attempts.length === 0) {
+      throw new AppError('CONFIG_ERROR', 'No AI provider/model configured')
+    }
 
     let emitted = false
     let lastError: unknown
-    for (const provider of providers) {
+    for (const { provider, model } of attempts) {
       try {
         const startedAt = Date.now()
         let text = ''
-        let model: string | undefined
+        let answeredModel: string | undefined
         let usage: TranslateResult['usage']
 
         if (provider.client.stream) {
-          for await (const chunk of provider.client.stream({ messages, signal })) {
+          for await (const chunk of provider.client.stream({ messages, model, signal })) {
             text += chunk.textDelta
-            if (!model && chunk.model) model = chunk.model
+            if (!answeredModel && chunk.model) answeredModel = chunk.model
             if (chunk.textDelta.length > 0) {
               emitted = true
               onDelta?.(chunk.textDelta)
             }
           }
         } else {
-          const result = await provider.client.generate({ messages, signal })
+          const result = await provider.client.generate({ messages, model, signal })
           text = result.text
-          model = result.model
+          answeredModel = result.model
           usage = result.usage
           if (text.length > 0) {
             emitted = true
@@ -124,7 +158,8 @@ export class TranslationService {
         return {
           translatedText: trimmed,
           provider: provider.label,
-          model: model ?? 'unknown',
+          providerId: provider.id,
+          model: answeredModel ?? model,
           usage,
           durationMs: Date.now() - startedAt,
         }
@@ -134,7 +169,7 @@ export class TranslationService {
         if (!isFailoverable(error)) throw error
       }
     }
-    throw wrapAllProvidersFailed(lastError, providers)
+    throw wrapAllProvidersFailed(lastError, attempts)
   }
 
   private async buildPrompt(request: TranslateRequest): Promise<string> {
@@ -149,21 +184,4 @@ export class TranslationService {
       context,
     })
   }
-}
-
-function isFailoverable(error: unknown): boolean {
-  return error instanceof AppError && FAILOVER_ERROR_CODES.has(error.code)
-}
-
-function wrapAllProvidersFailed(lastError: unknown, providers: ProviderRuntime[]): AppError {
-  const last = lastError instanceof AppError ? lastError : undefined
-  const attempts = providers.map((provider) => ({ provider: provider.label }))
-  if (last) {
-    return new AppError(
-      last.code,
-      `All ${providers.length} provider(s) failed — last error (${last.code}): ${last.message}`,
-      { attempts },
-    )
-  }
-  return new AppError('CONFIG_ERROR', 'No AI provider was attempted', { attempts })
 }

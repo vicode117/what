@@ -16,6 +16,8 @@ import {
   SaveRequestSchema,
   SubmitAnswerSchema,
   TermRequestSchema,
+  TestProviderRequestSchema,
+  TestProviderResultSchema,
   TranslateRequestSchema,
   TranslateStreamRequestSchema,
   UpdateSettingsSchema,
@@ -160,16 +162,19 @@ export function registerIpcHandlers(): void {
   async function buildProviderRuntimes(): Promise<ProviderRuntime[]> {
     const vaultSettings = await new SettingsStore(getVaultPath()).get()
     const keys = await credentials.loadAll()
+    const totalCombos = vaultSettings.providers.reduce((sum, p) => sum + p.models.length, 0)
+    const inPlaceRetries = totalCombos > 1 ? 0 : undefined
     return vaultSettings.providers.map((profile) => ({
       id: profile.id,
       label: profile.label,
+      models: profile.models,
       client: new OpenAiCompatibleClient({
         baseUrl: profile.baseUrl,
         apiKey: keys[profile.id] ?? null,
-        model: profile.model,
+        model: profile.models[0]!,
         temperature: profile.temperature,
         timeoutMs: profile.timeoutMs,
-        maxRetries: profile.maxRetries,
+        maxRetries: inPlaceRetries ?? profile.maxRetries,
       }),
     }))
   }
@@ -195,6 +200,48 @@ export function registerIpcHandlers(): void {
       history,
     }
   }
+
+  /** Connectivity test: tries each model in order with a tiny prompt. */
+  handle(IPC.providerTest, async (payload) => {
+    const request = TestProviderRequestSchema.parse(payload)
+    const storedKeys = await credentials.loadAll()
+    const apiKey = request.apiKey ?? (request.providerId ? (storedKeys[request.providerId] ?? null) : null)
+    const client = new OpenAiCompatibleClient({
+      baseUrl: request.baseUrl,
+      apiKey,
+      model: request.models[0]!,
+      timeoutMs: request.timeoutMs,
+      maxRetries: 0,
+      temperature: 0,
+    })
+    const attempts: { model: string; ok: boolean; code?: string; message?: string }[] = []
+    const startedAt = Date.now()
+    for (const model of request.models) {
+      try {
+        await client.generate({
+          messages: [{ role: 'user', content: 'Reply with the single word: OK' }],
+          model,
+          maxTokens: 16,
+          timeoutMs: request.timeoutMs,
+        })
+        attempts.push({ model, ok: true })
+        return TestProviderResultSchema.parse({
+          ok: true,
+          model,
+          latencyMs: Date.now() - startedAt,
+          attempts,
+        })
+      } catch (error) {
+        const appError = error instanceof AppError ? error : new AppError('PROVIDER_ERROR', String(error))
+        attempts.push({ model, ok: false, code: appError.code, message: appError.message })
+      }
+    }
+    return TestProviderResultSchema.parse({
+      ok: false,
+      latencyMs: Date.now() - startedAt,
+      attempts,
+    })
+  })
 
   handle(IPC.translate, async (payload) => {
     const request = TranslateRequestSchema.parse(payload)

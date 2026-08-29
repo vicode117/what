@@ -1,4 +1,4 @@
-import type { SaveRequest, SaveResult, TranslateRequest, TranslateResult, TranslateStreamRequest, GetRecordRequest } from './ipc'
+import type { SaveRequest, SaveResult, TestProviderRequest, TestProviderResult, TranslateRequest, TranslateResult, TranslateStreamRequest, GetRecordRequest } from './ipc'
 import type { HistoryPage, HistoryQuery, HistoryUpdate, IdRequest, StoredTranslationRecord } from './history'
 import type { GlossaryEntry, LearningPoint, MemoryPage, MemoryQuery, MemoryUpdate, TermRequest } from './memory'
 import type { SubmitAnswer, SubmitResult, TrainingSession } from './training'
@@ -23,6 +23,10 @@ export type AppApi = {
     translateStream(request: TranslateStreamRequest, onChunk: (delta: string) => void): Promise<TranslateResult>
     cancelTranslate(requestId: string): void
     save(request: SaveRequest): Promise<SaveResult>
+  }
+  providers: {
+    /** Tries each model in order with a tiny prompt; reports timing. */
+    test(request: TestProviderRequest): Promise<TestProviderResult>
   }
   history: {
     /** Returns null when no record with that id exists. */

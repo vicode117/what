@@ -22,7 +22,7 @@ describe('SettingsStore', () => {
       id: 'prov_default',
       label: 'Default',
       baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini',
+      models: ['gpt-4o-mini'],
     })
     expect(settings.translation.sourceLanguage).toBe('auto')
     expect(settings.translation.targetLanguage).toBe('zh-CN')
@@ -45,7 +45,7 @@ describe('SettingsStore', () => {
         id: 'prov_default',
         label: 'Default',
         baseUrl: 'https://legacy.example.com/v1',
-        model: 'legacy-model',
+        models: ['legacy-model'],
         timeoutMs: 30000,
         temperature: 0.5,
         maxRetries: 1,
@@ -53,19 +53,34 @@ describe('SettingsStore', () => {
     ])
   })
 
+  it('migrates old profiles with a single model field to the models list', async () => {
+    await writeFile(
+      path.join(vault, CONFIG_FILENAME),
+      JSON.stringify({
+        providers: [
+          { id: 'prov_old', label: 'Old shape', baseUrl: 'https://old.example.com/v1', model: 'old-model', timeoutMs: 60000, temperature: 0.3, maxRetries: 2 },
+        ],
+      }),
+      'utf8',
+    )
+    const settings = await new SettingsStore(vault).get()
+    expect(settings.providers[0]!.models).toEqual(['old-model'])
+  })
+
   it('persists the ordered provider list and keeps the legacy field in sync', async () => {
     const store = new SettingsStore(vault)
     await store.update({
       providers: [
-        { id: 'prov_a', label: 'Primary', baseUrl: 'https://a.example.com/v1', model: 'model-a', timeoutMs: 20000, temperature: 0.1, maxRetries: 0 },
-        { id: 'prov_b', label: 'Backup', baseUrl: 'https://b.example.com/v1', model: 'model-b', timeoutMs: 45000, temperature: 0.7, maxRetries: 3 },
+        { id: 'prov_a', label: 'Primary', baseUrl: 'https://a.example.com/v1', models: ['model-a1', 'model-a2'], timeoutMs: 20000, temperature: 0.1, maxRetries: 0 },
+        { id: 'prov_b', label: 'Backup', baseUrl: 'https://b.example.com/v1', models: ['model-b1'], timeoutMs: 45000, temperature: 0.7, maxRetries: 3 },
       ],
       translation: { autoSave: false },
     })
     const settings = await store.get()
     expect(settings.providers.map((provider) => provider.id)).toEqual(['prov_a', 'prov_b'])
+    expect(settings.providers[0]!.models).toEqual(['model-a1', 'model-a2'])
     expect(settings.provider.baseUrl).toBe('https://a.example.com/v1')
-    expect(settings.provider.model).toBe('model-a')
+    expect(settings.provider.model).toBe('model-a1')
     expect(settings.translation.autoSave).toBe(false)
 
     const raw = JSON.parse(await readFile(path.join(vault, CONFIG_FILENAME), 'utf8'))
@@ -79,13 +94,13 @@ describe('SettingsStore', () => {
     const settings = await store.get()
     expect(settings.translation.mode).toBe('literal')
     expect(settings.translation.autoSave).toBe(true)
-    expect(settings.providers[0]!.model).toBe('gpt-4o-mini')
+    expect(settings.providers[0]!.models).toEqual(['gpt-4o-mini'])
   })
 
   it('falls back to defaults on a corrupt file instead of crashing', async () => {
     await writeFile(path.join(vault, CONFIG_FILENAME), '{not json', 'utf8')
     const settings = await new SettingsStore(vault).get()
-    expect(settings.providers[0]!.model).toBe('gpt-4o-mini')
+    expect(settings.providers[0]!.models).toEqual(['gpt-4o-mini'])
   })
 
   it('rejects duplicate provider ids', async () => {
@@ -94,7 +109,7 @@ describe('SettingsStore', () => {
       id: 'prov_x',
       label: 'X',
       baseUrl: 'https://x.example.com/v1',
-      model: 'm',
+      models: ['m'],
       timeoutMs: 60000,
       temperature: 0.3,
       maxRetries: 2,

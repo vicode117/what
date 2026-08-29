@@ -188,6 +188,9 @@ export function TranslatePage() {
   const hasApiKey = settingsQuery.data
     ? Object.values(settingsQuery.data.hasApiKeys).some(Boolean)
     : true
+  const primaryProviderId = settingsQuery.data?.providers[0]?.id
+  const usedFallback =
+    result?.providerId !== undefined && primaryProviderId !== undefined && result.providerId !== primaryProviderId
 
   function handleTranslate(): void {
     if (!canTranslate) return
@@ -330,9 +333,10 @@ export function TranslatePage() {
             <div className="flex items-center gap-2">
               {(streamPending || revealing) && <Badge variant="secondary">streaming…</Badge>}
               {edited && <Badge variant="secondary">edited</Badge>}
+              {usedFallback && <Badge variant="outline">failover → {result!.provider}</Badge>}
               {result && (
                 <span className="text-muted-foreground text-xs">
-                  {result.model} · {result.durationMs} ms
+                  {result.provider} · {result.model} · {result.durationMs} ms
                   {result.usage ? ` · ${result.usage.totalTokens} tokens` : ''}
                 </span>
               )}

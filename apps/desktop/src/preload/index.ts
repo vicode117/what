@@ -13,6 +13,7 @@ import type {
   SaveRequest,
   SubmitAnswer,
   TermRequest,
+  TestProviderRequest,
   TranslateRequest,
   TranslateResult,
   TranslateStreamRequest,
@@ -44,6 +45,9 @@ const api: AppApi = {
     },
     cancelTranslate: (requestId: string) => ipcRenderer.send(IPC.streamCancel, { id: requestId }),
     save: (request: SaveRequest) => invoke(IPC.save, request),
+  },
+  providers: {
+    test: (request: TestProviderRequest) => invoke(IPC.providerTest, request),
   },
   history: {
     get: (request: GetRecordRequest) => invoke(IPC.getRecord, request),

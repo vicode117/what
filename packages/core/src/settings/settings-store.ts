@@ -33,7 +33,7 @@ export class SettingsStore {
       return this.normalize(VaultSettingsSchema.parse({}))
     }
     try {
-      return this.normalize(VaultSettingsSchema.parse(JSON.parse(raw)))
+      return this.normalize(VaultSettingsSchema.parse(migrateRaw(JSON.parse(raw))))
     } catch (error) {
       console.warn(
         '[settings] config.json is invalid; using defaults',
@@ -59,29 +59,48 @@ export class SettingsStore {
   }
 
   private normalize(settings: VaultSettings): VaultSettings {
-    if (settings.providers.length > 0) return settings
-    return {
-      ...settings,
-      providers: [
-        {
-          id: DEFAULT_PROVIDER_ID,
-          label: 'Default',
-          baseUrl: settings.provider.baseUrl,
-          model: settings.provider.model,
-          timeoutMs: settings.provider.timeoutMs,
-          temperature: settings.provider.temperature,
-          maxRetries: settings.provider.maxRetries,
-        },
-      ],
+    if (settings.providers.length === 0) {
+      return {
+        ...settings,
+        providers: [
+          {
+            id: DEFAULT_PROVIDER_ID,
+            label: 'Default',
+            baseUrl: settings.provider.baseUrl,
+            models: [settings.provider.model],
+            timeoutMs: settings.provider.timeoutMs,
+            temperature: settings.provider.temperature,
+            maxRetries: settings.provider.maxRetries,
+          },
+        ],
+      }
+    }
+    return settings
+  }
+}
+
+/**
+ * Older configs stored a single `model` per provider profile; newer
+ * ones use an ordered `models` list. Map the old field forward.
+ */
+function migrateRaw(raw: Record<string, unknown>): Record<string, unknown> {
+  const providers = raw['providers']
+  if (!Array.isArray(providers)) return raw
+  for (const provider of providers) {
+    if (typeof provider !== 'object' || provider === null) continue
+    const record = provider as Record<string, unknown>
+    if (!Array.isArray(record['models'])) {
+      record['models'] = typeof record['model'] === 'string' ? [record['model']] : []
     }
   }
+  return raw
 }
 
 function legacyProviderFrom(provider: VaultSettings['providers'][number] | undefined): VaultSettings['provider'] {
   return {
     name: 'openai-compatible',
     baseUrl: provider?.baseUrl ?? 'https://api.openai.com/v1',
-    model: provider?.model ?? 'gpt-4o-mini',
+    model: provider?.models[0] ?? 'gpt-4o-mini',
     timeoutMs: provider?.timeoutMs ?? 60000,
     temperature: provider?.temperature ?? 0.3,
     maxRetries: provider?.maxRetries ?? 2,

@@ -11,6 +11,7 @@ import type {
   SaveRequest,
   SubmitAnswer,
   TermRequest,
+  TestProviderRequest,
   TranslateRequest,
   TranslateStreamRequest,
   UpdateSettings,
@@ -45,6 +46,9 @@ export const api = {
     list: () => window.app.glossary.list(),
     add: (request: GlossaryEntry) => window.app.glossary.add(request),
     remove: (request: TermRequest) => window.app.glossary.remove(request),
+  },
+  providers: {
+    test: (request: TestProviderRequest) => window.app.providers.test(request),
   },
   training: {
     getToday: () => window.app.training.getToday(),

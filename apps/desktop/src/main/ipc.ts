@@ -215,8 +215,12 @@ export function registerIpcHandlers(): void {
     const services = await buildServices()
     const controller = new AbortController()
     streamControllers.set(requestId, controller)
+    const streamStart = Date.now()
     try {
       return await services.translation.translateStream(request, services.client, (delta) => {
+        if (process.env['TT_STREAM_DEBUG'] === '1') {
+          console.log(`[stream-delta] +${Date.now() - streamStart}ms len=${delta.length}`)
+        }
         if (!event.sender.isDestroyed()) {
           event.sender.send(IPC.streamChunk, { requestId, delta })
         }

@@ -126,11 +126,12 @@ describe('TranslatePage', () => {
     fireEvent.change(screen.getByLabelText('Source text'), { target: { value: 'Hello world' } })
     fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
 
-    // Deltas accumulate live while streaming.
-    expect(await screen.findByLabelText('Translation result (editable)')).toBeTruthy()
-    expect((screen.getByLabelText('Translation result (editable)') as HTMLTextAreaElement).value).toBe(
-      '你好，世界',
-    )
+    // Deltas accumulate live; the typewriter reveal catches up to the
+    // full text once the stream completes.
+    const textarea = (await screen.findByLabelText(
+      'Translation result (editable)',
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(textarea.value).toBe('你好，世界'))
 
     await waitFor(() => expect(app.translation.translateStream).toHaveBeenCalledTimes(1))
     const request = (app.translation.translateStream as ReturnType<typeof vi.fn>).mock.calls[0]![0]

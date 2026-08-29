@@ -1,5 +1,7 @@
 # TranslateTrainer
 
+[![CI](https://github.com/vicode117/what/actions/workflows/ci.yml/badge.svg)](https://github.com/vicode117/what/actions/workflows/ci.yml)
+
 A local-first desktop app that turns everyday AI translation into reusable personal language-learning
 material.
 

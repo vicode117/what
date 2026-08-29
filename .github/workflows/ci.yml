@@ -89,11 +89,14 @@ jobs:
         if: failure()
         shell: bash
         run: |
+          tail -10 build.log 2>/dev/null | while IFS= read -r line; do
+            echo "::error::$line"
+          done
           {
             echo '### Windows installer build failed — log tail'
             echo ''
             echo '```'
-            tail -80 build.log 2>/dev/null || echo '(build.log missing)'
+            tail -60 build.log 2>/dev/null || echo '(build.log missing)'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

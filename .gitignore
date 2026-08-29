@@ -11,3 +11,4 @@ release/
 # Never commit API keys or app-private data
 credentials.json
 *.credentials
+cr.json

@@ -1,0 +1,79 @@
+# GitLab CI for TranslateTrainer.
+#
+# verify stage : lint -> typecheck -> test (no network, no paid LLM calls)
+# package stage: bundle main/preload/renderer (artifact: apps/desktop/out/)
+#
+# The Electron binary is NOT downloaded in CI (not needed for verify/build);
+# ELECTRON_SKIP_BINARY_DOWNLOAD=1 keeps installs fast.
+
+stages:
+  - verify
+  - package
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+default:
+  image: node:22
+  cache:
+    key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store/
+  before_script:
+    - corepack enable
+    - pnpm config set store-dir .pnpm-store
+    - pnpm install --frozen-lockfile
+
+variables:
+  # Skip the Electron binary download; CI jobs never launch Electron.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+  # Silence corepack's interactive download prompt.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+
+lint:
+  stage: verify
+  script:
+    - pnpm lint
+
+typecheck:
+  stage: verify
+  script:
+    - pnpm typecheck
+
+test:
+  stage: verify
+  script:
+    - pnpm test
+
+build:
+  stage: package
+  script:
+    - pnpm build
+  artifacts:
+    name: 'translate-trainer-$CI_COMMIT_SHORT_SHA'
+    paths:
+      - apps/desktop/out/
+    expire_in: 1 week
+
+# Optional: package a Windows installer. Requires a self-hosted runner
+# tagged "windows" with the build tools electron-builder needs; never
+# runs on shared Linux runners.
+#
+# package:windows-installer:
+#   stage: package
+#   tags: [windows]
+#   rules:
+#     - if: $CI_COMMIT_TAG
+#   script:
+#     - corepack enable
+#     - pnpm install --frozen-lockfile
+#     - pnpm dist:installer
+#   artifacts:
+#     paths:
+#       - apps/desktop/release/*.exe
+#     expire_in: 1 week

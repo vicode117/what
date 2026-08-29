@@ -8,7 +8,18 @@ import { TranslatePage } from './translate-page'
 
 const settingsView: SettingsView = {
   vaultPath: 'C:/Users/tester/TranslationVault',
-  hasApiKey: true,
+  hasApiKeys: { prov_default: true },
+  providers: [
+    {
+      id: 'prov_default',
+      label: 'Default',
+      baseUrl: 'https://api.example.com/v1',
+      model: 'example-model',
+      timeoutMs: 60000,
+      temperature: 0.3,
+      maxRetries: 2,
+    },
+  ],
   provider: {
     name: 'openai-compatible',
     baseUrl: 'https://api.example.com/v1',
@@ -114,7 +125,10 @@ describe('TranslatePage', () => {
 
   it('warns when no API key is configured', async () => {
     const app = makeApi()
-    app.settings.get = vi.fn(async () => ({ ...settingsView, hasApiKey: false }))
+    app.settings.get = vi.fn(async () => ({
+      ...settingsView,
+      hasApiKeys: { prov_default: false },
+    }))
     renderPage(app)
     expect(await screen.findByText(/No API key configured/)).toBeTruthy()
   })

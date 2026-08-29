@@ -3,11 +3,9 @@ import { AUTO_DETECT } from './languages'
 import { LanguageCodeSchema, SourceLanguageSchema, TranslationModeSchema } from './translation'
 
 /**
- * AI provider configuration. OpenAI-compatible first.
- *
- * NOTE: the API key is deliberately NOT part of this schema.
- * Credentials live in the Electron Main process (encrypted via
- * safeStorage) and are never sent to the renderer.
+ * Legacy single-provider settings. Kept for reading old config.json
+ * files; it is migrated into `providers` on load and kept in sync with
+ * providers[0] on write.
  */
 export const ProviderConfigSchema = z.object({
   name: z.string().min(1).default('openai-compatible'),
@@ -19,6 +17,32 @@ export const ProviderConfigSchema = z.object({
 })
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>
+
+/** A configurable model provider. Array order = priority order. */
+export const ProviderProfileSchema = z.object({
+  id: z.string().min(1).max(64),
+  label: z.string().min(1).max(80),
+  baseUrl: z.url(),
+  model: z.string().min(1).max(200),
+  timeoutMs: z.number().int().min(1000).max(300000).default(60000),
+  temperature: z.number().min(0).max(2).default(0.3),
+  maxRetries: z.number().int().min(0).max(10).default(2),
+})
+
+export type ProviderProfile = z.infer<typeof ProviderProfileSchema>
+
+export const ProviderProfilesSchema = z
+  .array(ProviderProfileSchema)
+  .max(10)
+  .superRefine((list, ctx) => {
+    const seen = new Set<string>()
+    for (const [index, provider] of list.entries()) {
+      if (seen.has(provider.id)) {
+        ctx.addIssue({ code: 'custom', message: `Duplicate provider id: ${provider.id}`, path: [index, 'id'] })
+      }
+      seen.add(provider.id)
+    }
+  })
 
 export const TranslationDefaultsSchema = z.object({
   sourceLanguage: SourceLanguageSchema.default(AUTO_DETECT),
@@ -38,6 +62,8 @@ export type TrainingSettings = z.infer<typeof TrainingSettingsSchema>
 
 /** Settings persisted in `<vault>/config.json` (no secrets). */
 export const VaultSettingsSchema = z.object({
+  /** Ordered by priority: index 0 is tried first; failures fall through. */
+  providers: ProviderProfilesSchema.prefault([]),
   provider: ProviderConfigSchema.prefault({}),
   translation: TranslationDefaultsSchema.prefault({}),
   training: TrainingSettingsSchema.prefault({}),
@@ -46,9 +72,18 @@ export const VaultSettingsSchema = z.object({
 export type VaultSettings = z.infer<typeof VaultSettingsSchema>
 
 /** Partial update payload sent from the renderer. */
+export const ProviderKeyInputSchema = z.object({
+  providerId: z.string().min(1).max(64),
+  apiKey: z.string().min(1).max(1000),
+})
+
+export type ProviderKeyInput = z.infer<typeof ProviderKeyInputSchema>
+
 export const UpdateSettingsSchema = z.object({
-  provider: ProviderConfigSchema.partial().optional(),
-  apiKey: z.string().min(1).max(1000).optional(),
+  /** Full ordered list replacing the existing providers. */
+  providers: ProviderProfilesSchema.optional(),
+  /** API keys to store for provider ids (only sent when changed). */
+  providerKeys: z.array(ProviderKeyInputSchema).max(10).optional(),
   vaultPath: z.string().min(1).optional(),
   translation: TranslationDefaultsSchema.partial().optional(),
   training: TrainingSettingsSchema.partial().optional(),
@@ -56,8 +91,11 @@ export const UpdateSettingsSchema = z.object({
 
 export type UpdateSettings = z.infer<typeof UpdateSettingsSchema>
 
-/** What the renderer may see. The API key itself is never included. */
+/** What the renderer may see. API keys themselves are never included. */
 export type SettingsView = VaultSettings & {
   vaultPath: string
-  hasApiKey: boolean
+  /** provider id → whether a key is stored. */
+  hasApiKeys: Record<string, boolean>
 }
+
+export const DEFAULT_PROVIDER_ID = 'prov_default'

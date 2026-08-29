@@ -41,7 +41,7 @@ import {
   WeightedSelectionStrategy,
   parseTranslationRecord,
 } from '@tt/core'
-import type { LlmClient } from '@tt/core'
+import type { LlmClient, ProviderRuntime } from '@tt/core'
 import { SafeCredentialStore } from './credentials'
 import { builtinPromptsDir } from './paths'
 import { VaultWatcher } from './watcher'
@@ -99,18 +99,8 @@ export function registerIpcHandlers(): void {
 
   /** AI client for optional enhancement paths; null when no key is set. */
   async function createClientOrNull(): Promise<LlmClient | null> {
-    const vaultPath = getVaultPath()
-    const vaultSettings = await new SettingsStore(vaultPath).get()
-    const apiKey = await credentials.load()
-    if (!apiKey) return null
-    return new OpenAiCompatibleClient({
-      baseUrl: vaultSettings.provider.baseUrl,
-      apiKey,
-      model: vaultSettings.provider.model,
-      temperature: vaultSettings.provider.temperature,
-      timeoutMs: vaultSettings.provider.timeoutMs,
-      maxRetries: vaultSettings.provider.maxRetries,
-    })
+    const providers = await buildProviderRuntimes()
+    return providers[0]?.client ?? null
   }
 
   function getTraining(): TrainingService {
@@ -150,36 +140,49 @@ export function registerIpcHandlers(): void {
 
   async function settingsView(): Promise<SettingsView> {
     const vaultPath = getVaultPath()
-    const [vaultSettings, apiKey] = await Promise.all([
+    const [vaultSettings, keys] = await Promise.all([
       new SettingsStore(vaultPath).get(),
-      credentials.load(),
+      credentials.loadAll(),
     ])
-    return { ...vaultSettings, vaultPath, hasApiKey: apiKey !== null }
+    const hasApiKeys = Object.fromEntries(
+      vaultSettings.providers.map((provider) => [
+        provider.id,
+        typeof keys[provider.id] === 'string' && (keys[provider.id] as string).length > 0,
+      ]),
+    )
+    return { ...vaultSettings, vaultPath, hasApiKeys }
   }
 
   /**
-   * Services are built per request so a vault change or settings update
-   * takes effect immediately. Loads are small local file reads.
+   * Providers built in priority order from the current settings. Keys
+   * stay in the Main process — only ready-to-use clients leave here.
    */
+  async function buildProviderRuntimes(): Promise<ProviderRuntime[]> {
+    const vaultSettings = await new SettingsStore(getVaultPath()).get()
+    const keys = await credentials.loadAll()
+    return vaultSettings.providers.map((profile) => ({
+      id: profile.id,
+      label: profile.label,
+      client: new OpenAiCompatibleClient({
+        baseUrl: profile.baseUrl,
+        apiKey: keys[profile.id] ?? null,
+        model: profile.model,
+        temperature: profile.temperature,
+        timeoutMs: profile.timeoutMs,
+        maxRetries: profile.maxRetries,
+      }),
+    }))
+  }
+
+  /** Services are rebuilt per request so settings changes apply immediately. */
   async function buildServices(): Promise<{
     translation: TranslationService
     store: TranslationStore
     history: HistoryService
-    client: LlmClient
   }> {
     const vaultPath = getVaultPath()
-    const vaultSettings = await new SettingsStore(vaultPath).get()
     const prompts = new PromptManager([path.join(vaultPath, 'prompts'), builtinPromptsDir()])
     await prompts.load()
-    const apiKey = await credentials.load()
-    const client = new OpenAiCompatibleClient({
-      baseUrl: vaultSettings.provider.baseUrl,
-      apiKey,
-      model: vaultSettings.provider.model,
-      temperature: vaultSettings.provider.temperature,
-      timeoutMs: vaultSettings.provider.timeoutMs,
-      maxRetries: vaultSettings.provider.maxRetries,
-    })
     const index = getIndex()
     const store = new TranslationStore(vaultPath)
     const history = new HistoryService(store, index)
@@ -190,14 +193,14 @@ export function registerIpcHandlers(): void {
       ),
       store,
       history,
-      client,
     }
   }
 
   handle(IPC.translate, async (payload) => {
     const request = TranslateRequestSchema.parse(payload)
-    const services = await buildServices()
-    return services.translation.translate(request, services.client)
+    const [services, providers] = await Promise.all([buildServices(), buildProviderRuntimes()])
+    if (providers.length === 0) throw new AppError('CONFIG_ERROR', 'No AI provider configured')
+    return services.translation.translate(request, providers)
   })
 
   // Streaming translate: chunk events go to the requesting window; the
@@ -212,12 +215,13 @@ export function registerIpcHandlers(): void {
 
   handle(IPC.translateStream, async (payload, event) => {
     const { requestId, ...request } = TranslateStreamRequestSchema.parse(payload)
-    const services = await buildServices()
+    const [services, providers] = await Promise.all([buildServices(), buildProviderRuntimes()])
+    if (providers.length === 0) throw new AppError('CONFIG_ERROR', 'No AI provider configured')
     const controller = new AbortController()
     streamControllers.set(requestId, controller)
     const streamStart = Date.now()
     try {
-      return await services.translation.translateStream(request, services.client, (delta) => {
+      return await services.translation.translateStream(request, providers, (delta) => {
         if (process.env['TT_STREAM_DEBUG'] === '1') {
           console.log(`[stream-delta] +${Date.now() - streamStart}ms len=${delta.length}`)
         }
@@ -275,12 +279,14 @@ export function registerIpcHandlers(): void {
 
   handle(IPC.historyAnalyze, async (payload) => {
     const request = IdRequestSchema.parse(payload)
-    const services = await buildServices()
+    const [services, providers] = await Promise.all([buildServices(), buildProviderRuntimes()])
     const record = await services.history.get(request.id)
     if (!record) {
       throw new AppError('STORAGE_ERROR', `Record not found: ${request.id}`)
     }
-    const { learningPointIds } = await getMemory().analyze(record, services.client)
+    const primary = providers[0]
+    if (!primary) throw new AppError('CONFIG_ERROR', 'No AI provider configured')
+    const { learningPointIds } = await getMemory().analyze(record, primary.client)
     const updated = await services.store.update(request.id, {
       analyzedAt: new Date().toISOString(),
     })
@@ -335,10 +341,17 @@ export function registerIpcHandlers(): void {
   handle(IPC.settingsUpdate, async (payload) => {
     const patch = UpdateSettingsSchema.parse(payload)
     if (patch.vaultPath) setVaultPath(patch.vaultPath)
-    if (patch.apiKey) await credentials.store(patch.apiKey)
+    if (patch.providers) {
+      // Prune keys of deleted providers, then store any newly entered ones.
+      await credentials.retainOnly(patch.providers.map((provider) => provider.id))
+      for (const keyInput of patch.providerKeys ?? []) {
+        await credentials.store(keyInput.providerId, keyInput.apiKey)
+      }
+    }
     await new SettingsStore(getVaultPath()).update({
-      provider: patch.provider,
+      providers: patch.providers,
       translation: patch.translation,
+      training: patch.training,
     })
     return settingsView()
   })

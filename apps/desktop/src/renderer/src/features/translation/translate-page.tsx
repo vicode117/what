@@ -185,7 +185,9 @@ export function TranslatePage() {
   }, [autoSave, savedId, result, finalText, streamPending, queryClient])
 
   const canTranslate = sourceText.trim().length > 0 && !streamPending
-  const hasApiKey = settingsQuery.data?.hasApiKey ?? true
+  const hasApiKey = settingsQuery.data
+    ? Object.values(settingsQuery.data.hasApiKeys).some(Boolean)
+    : true
 
   function handleTranslate(): void {
     if (!canTranslate) return

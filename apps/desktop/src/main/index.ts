@@ -21,6 +21,13 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
+  // Temporary: relay renderer console to stdout for diagnosing save flow.
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
+    if (process.env['TT_STREAM_DEBUG'] === '1') {
+      console.log(`[renderer:${level}] ${message}`)
+    }
+  })
+
   // Right-click menu for editable fields and selections (Electron shows
   // no context menu by default).
   mainWindow.webContents.on('context-menu', (_event, params) => {

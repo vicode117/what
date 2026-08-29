@@ -315,6 +315,11 @@ export function SettingsPage() {
           {saveButton}
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {saveMutation.error && (
+            <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {describeError(saveMutation.error)}
+            </div>
+          )}
           <div ref={listRef} className="flex flex-col gap-3">
             {(providers ?? []).map((draft, index) => (
               <div key={draft.id} data-provider-id={draft.id} className={draggingId === draft.id ? 'opacity-40' : ''}>

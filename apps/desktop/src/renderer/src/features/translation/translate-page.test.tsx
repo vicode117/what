@@ -141,6 +141,19 @@ describe('TranslatePage', () => {
     expect(await screen.findByText(/No API key configured/)).toBeTruthy()
   })
 
+  it('translates on Enter and keeps Shift+Enter for new lines', async () => {
+    const app = makeApi()
+    renderPage(app)
+
+    const source = screen.getByLabelText('Source text')
+    fireEvent.change(source, { target: { value: 'Hello' } })
+    fireEvent.keyDown(source, { key: 'Enter', shiftKey: true })
+    expect(app.translation.translateStream).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(source, { key: 'Enter' })
+    await waitFor(() => expect(app.translation.translateStream).toHaveBeenCalledTimes(1))
+  })
+
   it('streams deltas, then auto-saves the translation', async () => {
     const app = makeApi()
     renderPage(app)

@@ -1,5 +1,6 @@
 import path from 'node:path'
-import { BrowserWindow, app, shell } from 'electron'
+import { BrowserWindow, Menu, app, shell } from 'electron'
+import type { MenuItemConstructorOptions } from 'electron'
 import { registerIpcHandlers } from './ipc'
 
 function createWindow(): void {
@@ -19,6 +20,29 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
+
+  // Right-click menu for editable fields and selections (Electron shows
+  // no context menu by default).
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const template: MenuItemConstructorOptions[] = []
+    if (params.isEditable) {
+      template.push(
+        { role: 'undo', label: '撤销' },
+        { role: 'redo', label: '重做' },
+        { type: 'separator' },
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' },
+        { type: 'separator' },
+        { role: 'selectAll', label: '全选' },
+      )
+    } else if (params.selectionText.trim().length > 0) {
+      template.push({ role: 'copy', label: '复制' })
+    }
+    if (template.length > 0) {
+      Menu.buildFromTemplate(template).popup({ window: mainWindow })
+    }
+  })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     if (details.url.startsWith('https:')) {

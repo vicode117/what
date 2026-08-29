@@ -198,7 +198,8 @@ export function TranslatePage() {
   }
 
   function handleSourceKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    // Enter translates; Shift+Enter inserts a new line.
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       handleTranslate()
     }
@@ -306,7 +307,7 @@ export function TranslatePage() {
               </Button>
             )}
           </div>
-          <p className="text-muted-foreground text-xs">Ctrl+Enter to translate.</p>
+          <p className="text-muted-foreground text-xs">Enter to translate · Shift+Enter for a new line · right-click to copy/paste</p>
         </CardContent>
       </Card>
 

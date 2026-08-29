@@ -66,6 +66,38 @@ function newProviderDraft(index: number): ProviderDraft {
   }
 }
 
+/**
+ * Drafts survive page navigation (route changes unmount the page).
+ * Cleared only when settings are saved to the vault.
+ */
+let providerDraftCache: ProviderDraft[] | null = null
+
+function signatureOf(
+  drafts: ProviderDraft[],
+  values: { sourceLanguage: string; targetLanguage: string; mode: string; autoSave: boolean; dailySessionSize: string },
+): string {
+  return JSON.stringify({
+    providers: drafts.map(({ apiKeyDraft: _apiKey, hasKey: _hasKey, modelInput: _modelInput, ...rest }) => rest),
+    values,
+  })
+}
+
+function isAutoSaveable(drafts: ProviderDraft[]): boolean {
+  return (
+    drafts.length > 0 &&
+    drafts.every(
+      (draft) =>
+        draft.label.trim().length > 0 &&
+        draft.baseUrl.trim().length > 0 &&
+        URL.canParse(draft.baseUrl.trim()) &&
+        draft.models.length > 0 &&
+        Number.isFinite(Number(draft.timeoutMs)) &&
+        Number.isFinite(Number(draft.temperature)) &&
+        Number.isFinite(Number(draft.maxRetries)),
+    )
+  )
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: api.settings.get })
@@ -81,13 +113,27 @@ export function SettingsPage() {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, TestProviderResult | 'loading'>>({})
 
-  // Seed local form state once settings have loaded.
+  // Seed local form state once settings have loaded; drafts from a
+  // previous visit take precedence so nothing is lost mid-editing.
   const seededRef = useRef(false)
   useEffect(() => {
     const settings = settingsQuery.data
     if (!settings || seededRef.current) return
     seededRef.current = true
-    setProviders(settings.providers.map((profile) => toDraft(profile, settings.hasApiKeys[profile.id] === true)))
+    const drafts = providerDraftCache
+      ? providerDraftCache.map((draft) => ({
+          ...draft,
+          hasKey: draft.hasKey || settings.hasApiKeys[draft.id] === true,
+        }))
+      : settings.providers.map((profile) => toDraft(profile, settings.hasApiKeys[profile.id] === true))
+    setProviders(drafts)
+    lastSavedSignatureRef.current = signatureOf(drafts, {
+      sourceLanguage: settings.translation.sourceLanguage,
+      targetLanguage: settings.translation.targetLanguage,
+      mode: settings.translation.mode,
+      autoSave: settings.translation.autoSave,
+      dailySessionSize: String(settings.training.dailySessionSize),
+    })
     setSourceLanguage(settings.translation.sourceLanguage)
     setTargetLanguage(settings.translation.targetLanguage)
     setMode(settings.translation.mode)
@@ -96,10 +142,10 @@ export function SettingsPage() {
   }, [settingsQuery.data])
 
   const saveMutation = useMutation({
-    mutationFn: (drafts: ProviderDraft[]) => {
+    mutationFn: async (input: { drafts: ProviderDraft[]; signature: string }) => {
       const sessionSize = Number(dailySessionSize)
       if (!Number.isFinite(sessionSize)) throw new Error('Daily session size must be a number.')
-      const profiles: ProviderProfile[] = drafts.map((draft, index) => {
+      const profiles: ProviderProfile[] = input.drafts.map((draft, index) => {
         const timeoutMs = Number(draft.timeoutMs)
         const temperature = Number(draft.temperature)
         const maxRetries = Number(draft.maxRetries)
@@ -119,17 +165,21 @@ export function SettingsPage() {
           maxRetries: Math.round(maxRetries),
         }
       })
-      return api.settings.update({
+      const settingsView = await api.settings.update({
         providers: profiles,
-        providerKeys: drafts
+        providerKeys: input.drafts
           .filter((draft) => draft.apiKeyDraft.trim().length > 0)
           .map((draft) => ({ providerId: draft.id, apiKey: draft.apiKeyDraft.trim() })),
         translation: { sourceLanguage, targetLanguage, mode, autoSave },
         training: { dailySessionSize: Math.round(sessionSize) },
       })
+      return { signature: input.signature, settingsView }
     },
-    onSuccess: () => {
-      setSaved(true)
+    onSuccess: ({ signature, settingsView }) => {
+      lastSavedSignatureRef.current = signature
+      providerDraftCache = settingsView.providers.map((profile) =>
+        toDraft(profile, settingsView.hasApiKeys[profile.id] === true),
+      )
       setProviders((current) =>
         current
           ? current.map((draft) => ({
@@ -140,9 +190,27 @@ export function SettingsPage() {
           : current,
       )
       void queryClient.invalidateQueries({ queryKey: ['settings'] })
+      setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
   })
+
+  // Auto-save: persist shortly after any form change once every row is
+  // complete enough to be valid. Incomplete rows stay as drafts and
+  // survive page navigation via the module-level cache.
+  const lastSavedSignatureRef = useRef<string | null>(null)
+  const formValues = { sourceLanguage, targetLanguage, mode, autoSave, dailySessionSize }
+  const formSignature = providers === null ? '' : signatureOf(providers, formValues)
+  useEffect(() => {
+    if (providers === null || !seededRef.current) return
+    if (formSignature === lastSavedSignatureRef.current) return
+    if (!isAutoSaveable(providers)) return
+    const timer = setTimeout(() => {
+      saveMutation.mutate({ drafts: providers, signature: formSignature })
+    }, 1200)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formSignature])
 
   const chooseVaultMutation = useMutation({
     mutationFn: api.settings.chooseVault,
@@ -222,7 +290,9 @@ export function SettingsPage() {
   }
 
   function saveNow(): void {
-    if (providers && providers.length > 0) saveMutation.mutate(providers)
+    if (providers && providers.length > 0) {
+      saveMutation.mutate({ drafts: providers, signature: formSignature })
+    }
   }
 
   const saveButton = (

@@ -23,7 +23,7 @@ export class HistoryService {
 
   async updateMeta(
     id: string,
-    patch: { tags?: string[]; notes?: string },
+    patch: { tags?: string[]; notes?: string; userTranslation?: string | null },
   ): Promise<StoredTranslationRecord | null> {
     const updated = await this.store.update(id, patch)
     if (updated) await this.index.upsert(updated)

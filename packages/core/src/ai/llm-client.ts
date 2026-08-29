@@ -40,6 +40,8 @@ export type GenerationResult = {
 
 export type GenerationChunk = {
   textDelta: string
+  /** Model name as reported on the first stream chunk, when available. */
+  model?: string
 }
 
 export interface LlmClient {

@@ -24,6 +24,8 @@ export const TranslationDefaultsSchema = z.object({
   sourceLanguage: SourceLanguageSchema.default(AUTO_DETECT),
   targetLanguage: LanguageCodeSchema.default('zh-CN'),
   mode: TranslationModeSchema.default('natural'),
+  /** Automatically persist every successful translation to the Vault. */
+  autoSave: z.boolean().default(true),
 })
 
 export type TranslationDefaults = z.infer<typeof TranslationDefaultsSchema>

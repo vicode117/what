@@ -12,6 +12,7 @@ import type {
   SubmitAnswer,
   TermRequest,
   TranslateRequest,
+  TranslateStreamRequest,
   UpdateSettings,
 } from '@tt/contracts'
 
@@ -22,6 +23,9 @@ import type {
 export const api = {
   translation: {
     translate: (request: TranslateRequest) => window.app.translation.translate(request),
+    translateStream: (request: TranslateStreamRequest, onChunk: (delta: string) => void) =>
+      window.app.translation.translateStream(request, onChunk),
+    cancelTranslate: (requestId: string) => window.app.translation.cancelTranslate(requestId),
     save: (request: SaveRequest) => window.app.translation.save(request),
   },
   history: {
@@ -77,4 +81,8 @@ export function describeError(error: unknown): string {
   }
   if (error instanceof Error && error.message) return error.message
   return 'Something went wrong.'
+}
+
+export function isCancelled(error: unknown): boolean {
+  return error instanceof AppError && error.code === 'CANCELLED'
 }

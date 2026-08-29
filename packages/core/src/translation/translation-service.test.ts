@@ -104,6 +104,43 @@ describe('TranslationService', () => {
     expect(generate.mock.calls[0]![0].messages[0]!.content).toContain('- work order → 工单')
   })
 
+  it('streams deltas and resolves with the trimmed result', async () => {
+    const service = await makeService()
+    const deltas: string[] = []
+    const client: LlmClient = {
+      provider: 'openai-compatible',
+      generate: vi.fn(),
+      stream: async function* () {
+        yield { textDelta: '  你好，' }
+        yield { textDelta: '世界' }
+        yield { textDelta: '', model: 'stream-model' }
+      },
+    }
+
+    const result = await service.translateStream(
+      { text: 'hello', sourceLanguage: 'en', targetLanguage: 'zh-CN', mode: 'natural' },
+      client,
+      (delta) => deltas.push(delta),
+    )
+
+    expect(result).toMatchObject({ translatedText: '你好，世界', model: 'stream-model' })
+    // Deltas are forwarded raw; only the final result is trimmed.
+    expect(deltas).toEqual(['  你好，', '世界'])
+  })
+
+  it('falls back to generate() when the client has no stream support', async () => {
+    const service = await makeService()
+    const { client, generate } = stubClient()
+
+    const result = await service.translateStream(
+      { text: 'hello', sourceLanguage: 'en', targetLanguage: 'zh-CN', mode: 'natural' },
+      client,
+    )
+
+    expect(result.translatedText).toBe('译文')
+    expect(generate).toHaveBeenCalledTimes(1)
+  })
+
   it('propagates typed errors from the client', async () => {
     const service = await makeService()
     const { client, generate } = stubClient()

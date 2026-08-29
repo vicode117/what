@@ -57,6 +57,24 @@ describe('TranslationStore', () => {
     expect(record?.userTranslation).toBe('修正后的译文')
   })
 
+  it('sets and clears the user correction via update without touching the AI text', async () => {
+    const store = storeFor(new Date(2026, 7, 29))
+    const { id } = await store.save(draft)
+
+    const corrected = await store.update(id, { userTranslation: '手动修正' })
+    expect(corrected?.userTranslation).toBe('手动修正')
+    expect(corrected?.aiTranslation).toBe('你好，世界')
+
+    // Setting the AI text again counts as "no correction".
+    const reverted = await store.update(id, { userTranslation: '你好，世界' })
+    expect(reverted?.userTranslation).toBeNull()
+
+    // null clears the correction explicitly.
+    const cleared = await store.update(corrected!.id, { userTranslation: null })
+    expect(cleared?.userTranslation).toBeNull()
+    expect(cleared?.aiTranslation).toBe('你好，世界')
+  })
+
   it('returns null for unknown ids', async () => {
     const store = storeFor(new Date(2026, 7, 29))
     expect(await store.get('tr_20260829_999')).toBeNull()

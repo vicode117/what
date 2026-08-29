@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
-import type { AppApi, SettingsView } from '@tt/contracts'
+import type { AppApi, SettingsView, TranslateResult } from '@tt/contracts'
 import { TranslatePage } from './translate-page'
 
 const settingsView: SettingsView = {
@@ -17,19 +17,28 @@ const settingsView: SettingsView = {
     temperature: 0.3,
     maxRetries: 2,
   },
-  translation: { sourceLanguage: 'auto', targetLanguage: 'zh-CN', mode: 'natural' },
+  translation: { sourceLanguage: 'auto', targetLanguage: 'zh-CN', mode: 'natural', autoSave: true },
   training: { dailySessionSize: 12 },
+}
+
+const streamResult: TranslateResult = {
+  translatedText: '你好，世界',
+  provider: 'openai-compatible',
+  model: 'example-model',
+  durationMs: 12,
 }
 
 function makeApi(): AppApi {
   return {
     translation: {
-      translate: vi.fn(async () => ({
-        translatedText: '你好，世界',
-        provider: 'openai-compatible',
-        model: 'example-model',
-        durationMs: 12,
-      })),
+      translate: vi.fn(async () => streamResult),
+      translateStream: vi.fn(async (request, onChunk) => {
+        void request
+        onChunk('你好，')
+        onChunk('世界')
+        return streamResult
+      }),
+      cancelTranslate: vi.fn(),
       save: vi.fn(async () => ({ id: 'tr_20260829_001', filePath: 'C:/vault/tr_20260829_001.md' })),
     },
     history: {
@@ -110,22 +119,29 @@ describe('TranslatePage', () => {
     expect(await screen.findByText(/No API key configured/)).toBeTruthy()
   })
 
-  it('translates and saves through the typed bridge', async () => {
+  it('streams deltas, then auto-saves the translation', async () => {
     const app = makeApi()
     renderPage(app)
 
     fireEvent.change(screen.getByLabelText('Source text'), { target: { value: 'Hello world' } })
     fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
 
+    // Deltas accumulate live while streaming.
     expect(await screen.findByLabelText('Translation result (editable)')).toBeTruthy()
-    expect(app.translation.translate).toHaveBeenCalledWith({
+    expect((screen.getByLabelText('Translation result (editable)') as HTMLTextAreaElement).value).toBe(
+      '你好，世界',
+    )
+
+    await waitFor(() => expect(app.translation.translateStream).toHaveBeenCalledTimes(1))
+    const request = (app.translation.translateStream as ReturnType<typeof vi.fn>).mock.calls[0]![0]
+    expect(request).toMatchObject({
       text: 'Hello world',
       sourceLanguage: 'auto',
       targetLanguage: 'zh-CN',
       mode: 'natural',
     })
+    expect(request.requestId).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(app.translation.save).toHaveBeenCalledTimes(1))
     expect(app.translation.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -135,5 +151,25 @@ describe('TranslatePage', () => {
         model: 'example-model',
       }),
     )
+    expect(screen.getByText(/Saved ·/)).toBeTruthy()
+  })
+
+  it('does not auto-save when autoSave is disabled and keeps the Save button', async () => {
+    const app = makeApi()
+    app.settings.get = vi.fn(async () => ({
+      ...settingsView,
+      translation: { ...settingsView.translation, autoSave: false },
+    }))
+    renderPage(app)
+
+    // Wait for settings to load so autoSave=false is in effect.
+    await waitFor(() => expect(app.settings.get).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByLabelText('Source text'), { target: { value: 'Hello world' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
+
+    await waitFor(() => expect(app.translation.translateStream).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy())
+    expect(app.translation.save).not.toHaveBeenCalled()
   })
 })

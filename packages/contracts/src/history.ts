@@ -40,6 +40,8 @@ export const HistoryUpdateSchema = z.object({
   id: z.string().min(1).max(200),
   tags: z.array(z.string().min(1).max(64)).max(20).optional(),
   notes: z.string().max(20000).optional(),
+  /** Sets the user's final translation; null clears the correction. */
+  userTranslation: z.string().max(100000).nullable().optional(),
 })
 
 export type HistoryUpdate = z.infer<typeof HistoryUpdateSchema>

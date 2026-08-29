@@ -84,16 +84,25 @@ export class TranslationStore {
       notes?: string
       analyzedAt?: string | null
       deletedAt?: string | null
+      /** Sets the user's final translation; null clears the correction. */
+      userTranslation?: string | null
     },
   ): Promise<StoredTranslationRecord | null> {
     const existing = await this.get(id)
     if (!existing) return null
+    const userTranslation =
+      patch.userTranslation === undefined
+        ? existing.userTranslation
+        : patch.userTranslation === null || patch.userTranslation === existing.aiTranslation
+          ? null
+          : patch.userTranslation
     const next: TranslationRecord = {
       ...existing,
       tags: patch.tags ?? existing.tags,
       notes: patch.notes ?? existing.notes,
       analyzedAt: patch.analyzedAt !== undefined ? patch.analyzedAt : existing.analyzedAt,
       deletedAt: patch.deletedAt !== undefined ? patch.deletedAt : existing.deletedAt,
+      userTranslation,
     }
     try {
       await fs.writeFile(existing.filePath, serializeTranslationRecord(next), 'utf8')

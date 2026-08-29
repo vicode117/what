@@ -14,6 +14,8 @@ import type {
   SubmitAnswer,
   TermRequest,
   TranslateRequest,
+  TranslateResult,
+  TranslateStreamRequest,
   UpdateSettings,
 } from '@tt/contracts'
 
@@ -31,6 +33,16 @@ async function invoke<T>(channel: string, payload?: unknown): Promise<T> {
 const api: AppApi = {
   translation: {
     translate: (request: TranslateRequest) => invoke(IPC.translate, request),
+    translateStream: (request: TranslateStreamRequest, onChunk: (delta: string) => void) => {
+      const listener = (_event: unknown, data: { requestId: string; delta: string }): void => {
+        if (data && data.requestId === request.requestId) onChunk(data.delta)
+      }
+      ipcRenderer.on(IPC.streamChunk, listener)
+      return invoke<TranslateResult>(IPC.translateStream, request).finally(() => {
+        ipcRenderer.removeListener(IPC.streamChunk, listener)
+      })
+    },
+    cancelTranslate: (requestId: string) => ipcRenderer.send(IPC.streamCancel, { id: requestId }),
     save: (request: SaveRequest) => invoke(IPC.save, request),
   },
   history: {

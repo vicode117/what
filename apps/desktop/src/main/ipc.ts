@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { app, dialog, ipcMain } from 'electron'
+import type { IpcMainInvokeEvent } from 'electron'
 import {
   AppError,
   errorToPayload,
@@ -16,6 +17,7 @@ import {
   SubmitAnswerSchema,
   TermRequestSchema,
   TranslateRequestSchema,
+  TranslateStreamRequestSchema,
   UpdateSettingsSchema,
 } from '@tt/contracts'
 import type { IpcResult, SettingsView } from '@tt/contracts'
@@ -45,10 +47,13 @@ import { builtinPromptsDir } from './paths'
 import { VaultWatcher } from './watcher'
 import { getVaultPath, setVaultPath } from './vault'
 
-function handle<T>(channel: string, fn: (payload: unknown) => Promise<T>): void {
-  ipcMain.handle(channel, async (_event, payload: unknown): Promise<IpcResult<T>> => {
+function handle<T>(
+  channel: string,
+  fn: (payload: unknown, event: IpcMainInvokeEvent) => Promise<T>,
+): void {
+  ipcMain.handle(channel, async (event, payload: unknown): Promise<IpcResult<T>> => {
     try {
-      return { ok: true, data: await fn(payload) }
+      return { ok: true, data: await fn(payload, event) }
     } catch (error) {
       const errorPayload = errorToPayload(error)
       // Privacy: log code/message only — never translation content or API keys.
@@ -195,6 +200,32 @@ export function registerIpcHandlers(): void {
     return services.translation.translate(request, services.client)
   })
 
+  // Streaming translate: chunk events go to the requesting window; the
+  // invoke itself resolves with the final result. requestId is generated
+  // by the renderer and correlates chunks and cancellation.
+  const streamControllers = new Map<string, AbortController>()
+  ipcMain.on(IPC.streamCancel, (_event, payload: unknown) => {
+    const parsed = IdRequestSchema.safeParse(payload)
+    const controller = parsed.success ? streamControllers.get(parsed.data.id) : undefined
+    controller?.abort()
+  })
+
+  handle(IPC.translateStream, async (payload, event) => {
+    const { requestId, ...request } = TranslateStreamRequestSchema.parse(payload)
+    const services = await buildServices()
+    const controller = new AbortController()
+    streamControllers.set(requestId, controller)
+    try {
+      return await services.translation.translateStream(request, services.client, (delta) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(IPC.streamChunk, { requestId, delta })
+        }
+      }, controller.signal)
+    } finally {
+      streamControllers.delete(requestId)
+    }
+  })
+
   handle(IPC.save, async (payload) => {
     const request = SaveRequestSchema.parse(payload)
     const services = await buildServices()
@@ -219,7 +250,11 @@ export function registerIpcHandlers(): void {
   handle(IPC.historyUpdate, async (payload) => {
     const request = HistoryUpdateSchema.parse(payload)
     const services = await buildServices()
-    return services.history.updateMeta(request.id, { tags: request.tags, notes: request.notes })
+    return services.history.updateMeta(request.id, {
+      tags: request.tags,
+      notes: request.notes,
+      userTranslation: request.userTranslation,
+    })
   })
 
   handle(IPC.historyDelete, async (payload) => {

@@ -1,4 +1,4 @@
-import type { SaveRequest, SaveResult, TranslateRequest, TranslateResult, GetRecordRequest } from './ipc'
+import type { SaveRequest, SaveResult, TranslateRequest, TranslateResult, TranslateStreamRequest, GetRecordRequest } from './ipc'
 import type { HistoryPage, HistoryQuery, HistoryUpdate, IdRequest, StoredTranslationRecord } from './history'
 import type { GlossaryEntry, LearningPoint, MemoryPage, MemoryQuery, MemoryUpdate, TermRequest } from './memory'
 import type { SubmitAnswer, SubmitResult, TrainingSession } from './training'
@@ -15,6 +15,13 @@ import type { SettingsView, UpdateSettings } from './settings'
 export type AppApi = {
   translation: {
     translate(request: TranslateRequest): Promise<TranslateResult>
+    /**
+     * Streaming translate: deltas arrive via onChunk during generation;
+     * the promise resolves with the final (trimmed) result. Cancel with
+     * `cancelTranslate(requestId)`.
+     */
+    translateStream(request: TranslateStreamRequest, onChunk: (delta: string) => void): Promise<TranslateResult>
+    cancelTranslate(requestId: string): void
     save(request: SaveRequest): Promise<SaveResult>
   }
   history: {

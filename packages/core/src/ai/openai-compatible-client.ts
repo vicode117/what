@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { AppError } from '@tt/contracts'
 import type { ErrorCode } from '@tt/contracts'
-import type { GenerationRequest, GenerationResult, GenerationUsage, LlmClient } from './llm-client'
+import type { GenerationChunk, GenerationRequest, GenerationResult, GenerationUsage, LlmClient } from './llm-client'
 import { RETRYABLE_ERROR_CODES, withRetry } from './retry'
 
 export type OpenAiCompatibleClientOptions = {
@@ -64,6 +64,145 @@ export class OpenAiCompatibleClient implements LlmClient {
       sleep: this.sleepImpl,
       shouldRetry: (error) => RETRYABLE_ERROR_CODES.has(error.code),
     })
+  }
+
+  /**
+   * Streaming generation (SSE, OpenAI-compatible `stream: true`).
+   * Not retried — partial output cannot be replayed safely; callers get
+   * the same typed errors, and the overall timeout covers the whole stream.
+   */
+  async *stream(request: GenerationRequest): AsyncIterable<GenerationChunk> {
+    const requestId = request.requestId ?? randomUUID()
+    const timeoutMs = request.timeoutMs ?? this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
+    const onCallerAbort = () => controller.abort()
+    request.signal?.addEventListener('abort', onCallerAbort, { once: true })
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (this.options.apiKey) headers['Authorization'] = `Bearer ${this.options.apiKey}`
+
+      const response = await this.fetchImpl(this.chatUrl(), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: request.model ?? this.options.model,
+          messages: request.messages,
+          temperature: request.temperature ?? this.options.temperature ?? 0.3,
+          max_tokens: request.maxTokens,
+          stream: true,
+        }),
+        signal: controller.signal,
+      }).catch((error: unknown) =>
+        Promise.reject(
+          toRequestError(error, {
+            requestId,
+            timedOut,
+            callerAborted: request.signal?.aborted === true,
+            timeoutMs,
+          }),
+        ),
+      )
+
+      if (!response.ok) {
+        const errorBody = (await response.text().catch(() => '')).slice(0, MAX_ERROR_BODY_CHARS)
+        throw new AppError(mapHttpErrorToCode(response.status), `LLM provider returned HTTP ${response.status}`, {
+          requestId,
+          status: response.status,
+          body: errorBody,
+        })
+      }
+      if (!response.body) {
+        throw new AppError('INVALID_RESPONSE', 'LLM provider returned an empty stream', { requestId })
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let rawSse = ''
+      let rawBody = ''
+      let receivedDelta = false
+
+      // Parses one SSE line; returns the chunk to yield and whether the
+      // provider signalled [DONE].
+      const parseDataLine = (line: string): { done: boolean; chunk: GenerationChunk | null } => {
+        const trimmed = line.trim()
+        if (trimmed.length === 0 || trimmed.startsWith(':')) {
+          return { done: false, chunk: null }
+        }
+        if (trimmed.startsWith('data:')) {
+          const data = trimmed.slice(5).trim()
+          if (data === '[DONE]') return { done: true, chunk: null }
+          rawSse += `${data}\n`
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(data)
+          } catch {
+            return { done: false, chunk: null } // keep-alives or malformed fragments — skip
+          }
+          const delta = extractDelta(parsed)
+          if (delta !== null) receivedDelta = true
+          const model = readString(parsed, 'model') ?? undefined
+          const chunk =
+            delta !== null || model ? { textDelta: delta ?? '', ...(model ? { model } : {}) } : null
+          return { done: false, chunk }
+        }
+        // A non-data line — typically a whole JSON body from a server
+        // that ignored `stream: true`.
+        rawBody += trimmed
+        return { done: false, chunk: null }
+      }
+
+      for (;;) {
+        let readResult: { done: boolean; value?: Uint8Array }
+        try {
+          readResult = await reader.read()
+        } catch (error) {
+          throw toRequestError(error, {
+            requestId,
+            timedOut,
+            callerAborted: request.signal?.aborted === true,
+            timeoutMs,
+          })
+        }
+        if (readResult.done) break
+        buffer += decoder.decode(readResult.value, { stream: true })
+        const lines = buffer.split(/\r?\n/)
+        buffer = lines.pop() ?? ''
+        let finished = false
+        for (const line of lines) {
+          const { done, chunk } = parseDataLine(line)
+          if (chunk) yield chunk
+          if (done) {
+            finished = true
+            break
+          }
+        }
+        if (finished) break
+      }
+      // Flush a trailing line that had no newline before the stream ended.
+      if (buffer.trim().length > 0) {
+        const { chunk } = parseDataLine(buffer)
+        if (chunk) yield chunk
+      }
+
+      // Some OpenAI-compatible servers ignore `stream: true` and answer
+      // with one plain JSON body — fall back to it instead of failing.
+      if (!receivedDelta) {
+        const fallback =
+          extractContent(safeJsonParse(rawSse)) ?? extractContent(safeJsonParse(rawBody))
+        if (fallback !== null) yield { textDelta: fallback }
+      }
+    } finally {
+      clearTimeout(timer)
+      request.signal?.removeEventListener('abort', onCallerAbort)
+    }
   }
 
   private chatUrl(): string {
@@ -174,6 +313,23 @@ function extractContent(payload: unknown): string | null {
   const content = (message as { content?: unknown }).content
   if (typeof content !== 'string' || content.trim().length === 0) return null
   return content
+}
+
+function extractDelta(payload: unknown): string | null {
+  const choices = (payload as { choices?: unknown } | null)?.choices
+  if (!Array.isArray(choices) || choices.length === 0) return null
+  const delta = (choices[0] as { delta?: unknown } | null)?.delta
+  if (typeof delta !== 'object' || delta === null) return null
+  const content = (delta as { content?: unknown }).content
+  return typeof content === 'string' && content.length > 0 ? content : null
+}
+
+function safeJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
 }
 
 function extractUsage(payload: unknown): GenerationUsage | undefined {

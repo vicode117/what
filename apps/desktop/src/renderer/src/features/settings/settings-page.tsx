@@ -33,6 +33,7 @@ export function SettingsPage() {
   const [sourceLanguage, setSourceLanguage] = useState<SourceLanguage>(AUTO_DETECT)
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>('zh-CN')
   const [mode, setMode] = useState<TranslationMode>('natural')
+  const [autoSave, setAutoSave] = useState(true)
   const [dailySessionSize, setDailySessionSize] = useState('12')
   const [saved, setSaved] = useState(false)
 
@@ -53,6 +54,7 @@ export function SettingsPage() {
     setSourceLanguage(settings.translation.sourceLanguage)
     setTargetLanguage(settings.translation.targetLanguage)
     setMode(settings.translation.mode)
+    setAutoSave(settings.translation.autoSave)
     setDailySessionSize(String(settings.training.dailySessionSize))
   }, [settingsQuery.data])
 
@@ -77,7 +79,7 @@ export function SettingsPage() {
           maxRetries,
         },
         apiKey: form.apiKey.length > 0 ? form.apiKey : undefined,
-        translation: { sourceLanguage, targetLanguage, mode },
+        translation: { sourceLanguage, targetLanguage, mode, autoSave },
         training: { dailySessionSize: Math.round(sessionSize) },
       })
     },
@@ -128,6 +130,14 @@ export function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={autoSave}
+              onChange={(event) => setAutoSave(event.target.checked)}
+            />
+            Auto-save every successful translation to the Vault (edits update the saved record)
+          </label>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="base-url">Base URL</Label>
             <Input

@@ -296,8 +296,13 @@ export function SettingsPage() {
   }
 
   const saveButton = (
-    <Button onClick={saveNow} disabled={saveMutation.isPending || providers.length === 0} size="sm">
-      {saveMutation.isPending ? 'Saving…' : 'Save'}
+    <Button
+      onClick={saveNow}
+      disabled={saveMutation.isPending || providers.length === 0}
+      size="sm"
+      className={saved ? 'border-emerald-400 bg-emerald-50 text-emerald-800 hover:bg-emerald-50' : ''}
+    >
+      {saveMutation.isPending ? 'Saving…' : saved ? '✓ Saved' : 'Save'}
     </Button>
   )
 
@@ -515,10 +520,14 @@ export function SettingsPage() {
       )}
 
       <div className="flex items-center gap-3">
-        <Button onClick={saveNow} disabled={saveMutation.isPending || providers.length === 0}>
-          {saveMutation.isPending ? 'Saving…' : 'Save Settings'}
+        <Button
+          onClick={saveNow}
+          disabled={saveMutation.isPending || providers.length === 0}
+          className={saved ? 'border-emerald-400 bg-emerald-50 text-emerald-800 hover:bg-emerald-50' : ''}
+        >
+          {saveMutation.isPending ? 'Saving…' : saved ? '✓ Saved' : 'Save Settings'}
         </Button>
-        {saved && <span className="text-sm text-emerald-600">Saved</span>}
+        {saved && <span className="text-sm text-emerald-600">Settings saved to the vault</span>}
       </div>
     </div>
   )

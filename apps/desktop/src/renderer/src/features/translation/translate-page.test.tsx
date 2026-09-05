@@ -161,8 +161,7 @@ describe('TranslatePage', () => {
     fireEvent.change(screen.getByLabelText('Source text'), { target: { value: 'Hello world' } })
     fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
 
-    // Deltas accumulate live; the typewriter reveal catches up to the
-    // full text once the stream completes.
+    // Deltas accumulate live and the completed result is committed at once.
     const textarea = (await screen.findByLabelText(
       'Translation result (editable)',
     )) as HTMLTextAreaElement
@@ -188,6 +187,28 @@ describe('TranslatePage', () => {
       }),
     )
     expect(screen.getByText(/Saved ·/)).toBeTruthy()
+  })
+
+  it('shows the first stream delta without an artificial reveal delay', async () => {
+    const app = makeApi()
+    let finish!: (result: TranslateResult) => void
+    const finished = new Promise<TranslateResult>((resolve) => {
+      finish = resolve
+    })
+    app.translation.translateStream = vi.fn(async (_request, onChunk) => {
+      onChunk('你')
+      return finished
+    })
+    renderPage(app)
+
+    fireEvent.change(screen.getByLabelText('Source text'), { target: { value: 'Hello' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
+
+    const textarea = (await screen.findByLabelText('Translation result (editable)')) as HTMLTextAreaElement
+    await waitFor(() => expect(textarea.value).toBe('你'), { interval: 1, timeout: 30 })
+
+    finish(streamResult)
+    await waitFor(() => expect(textarea.value).toBe('你好，世界'))
   })
 
   it('does not auto-save when autoSave is disabled and keeps the Save button', async () => {

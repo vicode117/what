@@ -2,8 +2,8 @@ import path from 'node:path'
 import { watch, type FSWatcher } from 'chokidar'
 
 /**
- * Watches the Vault's translations directory for external changes
- * (sync conflicts, Obsidian edits, files appearing/disappearing).
+ * Watches the Vault's derived-input files for external changes (sync
+ * conflicts, prompt edits, Obsidian edits, files appearing/disappearing).
  * Events are debounced; the callback only receives changed paths and
  * NEVER rewrites Markdown — it refreshes the derived index.
  */
@@ -19,12 +19,19 @@ export class VaultWatcher {
 
   async watch(vaultPath: string): Promise<void> {
     await this.stop()
-    this.watcher = watch(path.join(vaultPath, 'translations'), {
-      ignoreInitial: true,
-      depth: 6,
-      ignored: (file: string) => path.basename(file).startsWith('~$'),
-      awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
-    })
+    this.watcher = watch(
+      [
+        path.join(vaultPath, 'translations'),
+        path.join(vaultPath, 'prompts'),
+        path.join(vaultPath, 'config.json'),
+      ],
+      {
+        ignoreInitial: true,
+        depth: 6,
+        ignored: (file: string) => path.basename(file).startsWith('~$'),
+        awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+      },
+    )
     this.watcher.on('add', (file: string) => this.enqueue(file))
     this.watcher.on('change', (file: string) => this.enqueue(file))
     this.watcher.on('unlink', (file: string) => this.enqueue(file))

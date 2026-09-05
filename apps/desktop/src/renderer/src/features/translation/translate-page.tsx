@@ -37,10 +37,43 @@ export function TranslatePage() {
   const [mode, setMode] = useState<TranslationMode>('natural')
   const [result, setResult] = useState<TranslateResult | null>(null)
   const [finalText, setFinalText] = useState('')
-  const [shownLength, setShownLength] = useState(0)
   const [edited, setEdited] = useState(false)
   const [savedId, setSavedId] = useState<string | null>(null)
   const [requestId, setRequestId] = useState<string | null>(null)
+
+  const streamTextRef = useRef('')
+  const streamFlushTimerRef = useRef<number | null>(null)
+
+  function clearStreamFlush(): void {
+    if (streamFlushTimerRef.current !== null) {
+      window.clearTimeout(streamFlushTimerRef.current)
+      streamFlushTimerRef.current = null
+    }
+  }
+
+  function flushStreamText(): void {
+    streamFlushTimerRef.current = null
+    setFinalText(streamTextRef.current)
+  }
+
+  function appendStreamDelta(delta: string): void {
+    if (delta.length === 0) return
+    const isFirstDelta = streamTextRef.current.length === 0
+    streamTextRef.current += delta
+    if (isFirstDelta) {
+      setFinalText(streamTextRef.current)
+      return
+    }
+    if (streamFlushTimerRef.current === null) {
+      streamFlushTimerRef.current = window.setTimeout(flushStreamText, 16)
+    }
+  }
+
+  useEffect(() => () => {
+    if (streamFlushTimerRef.current !== null) {
+      window.clearTimeout(streamFlushTimerRef.current)
+    }
+  }, [])
 
   const { copied, copy } = useCopy()
   const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: api.settings.get })
@@ -87,19 +120,22 @@ export function TranslatePage() {
       const id = createRequestId()
       setRequestId(id)
       setResult(null)
+      clearStreamFlush()
+      streamTextRef.current = ''
       setFinalText('')
-      setShownLength(0)
       setEdited(false)
       setSavedId(null)
       lastSyncedRef.current = null
       const text = sourceText
       const result = await api.translation.translateStream(
         { text, sourceLanguage, targetLanguage, mode, requestId: id },
-        (delta) => setFinalText((prev) => prev + delta),
+        appendStreamDelta,
       )
       return { result, text }
     },
     onSuccess: ({ result, text }) => {
+      clearStreamFlush()
+      streamTextRef.current = result.translatedText
       setResult(result)
       setFinalText(result.translatedText)
       setEdited(false)
@@ -107,26 +143,6 @@ export function TranslatePage() {
       if (autoSave) autoSaveMutation.mutate({ result, sourceText: text })
     },
   })
-
-  // Typewriter reveal: providers differ wildly in how they deliver SSE
-  // (true token streams vs. the whole body in one burst). Reveal received
-  // text at an adaptive pace so the output always feels streamed, and
-  // catch up quickly when a large chunk lands at once.
-  useEffect(() => {
-    if (shownLength >= finalText.length) return
-    const timer = setInterval(() => {
-      setShownLength((prev) => {
-        const remaining = finalText.length - prev
-        if (remaining <= 0) return prev
-        const step = Math.max(2, Math.ceil(remaining / 20))
-        return Math.min(finalText.length, prev + step)
-      })
-    }, 50)
-    return () => clearInterval(timer)
-  }, [finalText, shownLength])
-
-  const displayText = shownLength >= finalText.length ? finalText : finalText.slice(0, shownLength)
-  const revealing = shownLength < finalText.length
 
   const autoSaveMutation = useMutation({
     mutationFn: async (input: { result: TranslateResult; sourceText: string }) => ({
@@ -332,12 +348,13 @@ export function TranslatePage() {
           <CardHeader className="flex-row items-center justify-between gap-2">
             <CardTitle>Translation</CardTitle>
             <div className="flex items-center gap-2">
-              {(streamPending || revealing) && <Badge variant="secondary">streaming…</Badge>}
+              {streamPending && <Badge variant="secondary">streaming…</Badge>}
               {edited && <Badge variant="secondary">edited</Badge>}
               {usedFallback && <Badge variant="outline">failover → {result!.provider}</Badge>}
               {result && (
                 <span className="text-muted-foreground text-xs">
                   {result.provider} · {result.model} · {result.durationMs} ms
+                  {result.firstTokenMs !== undefined ? ` · first ${result.firstTokenMs} ms` : ''}
                   {result.usage ? ` · ${result.usage.totalTokens} tokens` : ''}
                 </span>
               )}
@@ -346,26 +363,27 @@ export function TranslatePage() {
           <CardContent className="flex flex-col gap-3">
             <Textarea
               aria-label="Translation result (editable)"
-              value={displayText}
-              readOnly={streamPending || revealing}
+              value={finalText}
+              readOnly={streamPending}
               onChange={(event) => {
                 if (!result) return
-                setFinalText(event.target.value)
-                setShownLength(event.target.value.length)
-                setEdited(event.target.value !== result.translatedText)
+                const nextText = event.target.value
+                streamTextRef.current = nextText
+                setFinalText(nextText)
+                setEdited(nextText !== result.translatedText)
               }}
               className="min-h-28"
             />
             <div className="flex flex-wrap items-center gap-2">
               {!autoSave && result && (
-                <Button onClick={handleSave} disabled={saveMutation.isPending || revealing}>
+                <Button onClick={handleSave} disabled={saveMutation.isPending}>
                   {saveMutation.isPending ? 'Saving…' : 'Save'}
                 </Button>
               )}
               <Button
                 variant="outline"
-                onClick={() => void copy(displayText)}
-                disabled={displayText.length === 0}
+                onClick={() => void copy(finalText)}
+                disabled={finalText.length === 0}
               >
                 {copied ? 'Copied' : 'Copy'}
               </Button>
@@ -373,6 +391,7 @@ export function TranslatePage() {
                 <Button
                   variant="ghost"
                   onClick={() => {
+                    streamTextRef.current = result.translatedText
                     setFinalText(result.translatedText)
                     setEdited(false)
                   }}

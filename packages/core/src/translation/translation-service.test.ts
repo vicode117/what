@@ -193,6 +193,7 @@ describe('TranslationService', () => {
       )
 
       expect(result).toMatchObject({ translatedText: '你好，世界', model: 'stream-model' })
+      expect(result.firstTokenMs).toBeGreaterThanOrEqual(0)
       // Deltas are forwarded raw; only the final result is trimmed.
       expect(deltas).toEqual(['  你好，', '世界'])
     })

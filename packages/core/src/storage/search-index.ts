@@ -98,7 +98,9 @@ export type SearchIndexOptions = {
 
 export class SearchIndexService {
   private entries = new Map<string, SearchIndexEntry>()
+  private normalizedEntries = new Map<string, { source: string; haystack: string }>()
   private loaded = false
+  private loadPromise: Promise<void> | null = null
 
   constructor(
     private readonly vaultPath: string,
@@ -116,6 +118,15 @@ export class SearchIndexService {
   /** Loads the index from disk, rebuilding it when missing or unreadable. */
   async ensure(): Promise<void> {
     if (this.loaded) return
+    const promise = this.loadPromise ?? (this.loadPromise = this.loadFromDisk())
+    try {
+      await promise
+    } finally {
+      if (this.loadPromise === promise) this.loadPromise = null
+    }
+  }
+
+  private async loadFromDisk(): Promise<void> {
     try {
       const raw = await fs.readFile(this.indexFile, 'utf8')
       const parsed = JSON.parse(raw) as SearchIndexFile
@@ -123,6 +134,7 @@ export class SearchIndexService {
         throw new Error('unsupported index version')
       }
       this.entries = new Map(Object.entries(parsed.entries))
+      this.normalizedEntries.clear()
     } catch {
       await this.rebuild()
     }
@@ -133,15 +145,22 @@ export class SearchIndexService {
   async rebuild(): Promise<number> {
     const entries = new Map<string, SearchIndexEntry>()
     const files = await this.listTranslationFiles()
-    for (const filePath of files) {
-      try {
-        const raw = await fs.readFile(filePath, 'utf8')
-        const record = parseTranslationRecord(raw)
-        entries.set(record.id, toEntry(record, filePath))
-      } catch {
-        // unreadable/corrupt file — skip; the file itself is never touched
-      }
-    }    this.entries = entries
+    const parsed = await Promise.all(
+      files.map(async (filePath) => {
+        try {
+          const raw = await fs.readFile(filePath, 'utf8')
+          return { filePath, record: parseTranslationRecord(raw) }
+        } catch {
+          // unreadable/corrupt file — skip; the file itself is never touched
+          return null
+        }
+      }),
+    )
+    for (const item of parsed) {
+      if (item) entries.set(item.record.id, toEntry(item.record, item.filePath))
+    }
+    this.entries = entries
+    this.normalizedEntries.clear()
     await this.persist()
     this.loaded = true
     return entries.size
@@ -149,11 +168,13 @@ export class SearchIndexService {
 
   async upsert(record: StoredTranslationRecord): Promise<void> {
     this.entries.set(record.id, toEntry(record, record.filePath))
+    this.normalizedEntries.delete(record.id)
     await this.persist()
   }
 
   async remove(id: string): Promise<void> {
     if (this.entries.delete(id)) {
+      this.normalizedEntries.delete(id)
       await this.persist()
     }
   }
@@ -164,6 +185,7 @@ export class SearchIndexService {
     for (const [id, entry] of this.entries) {
       if (path.normalize(entry.filePath) === normalized) {
         this.entries.delete(id)
+        this.normalizedEntries.delete(id)
         await this.persist()
         return
       }
@@ -213,8 +235,7 @@ export class SearchIndexService {
     const scored: { entry: SearchIndexEntry; coverage: number }[] = []
     for (const entry of this.entries.values()) {
       if (entry.deletedAt !== null) continue
-      const source = entry.sourceText.toLowerCase()
-      const haystack = entryHaystack(entry)
+      const { source, haystack } = this.normalizedEntry(entry)
       let hits = 0
       for (const token of tokens) {
         if (source.includes(token) || haystack.includes(token)) hits += 1
@@ -228,6 +249,14 @@ export class SearchIndexService {
 
   size(): number {
     return this.entries.size
+  }
+
+  private normalizedEntry(entry: SearchIndexEntry): { source: string; haystack: string } {
+    const cached = this.normalizedEntries.get(entry.id)
+    if (cached) return cached
+    const normalized = { source: entry.sourceText.toLowerCase(), haystack: entryHaystack(entry) }
+    this.normalizedEntries.set(entry.id, normalized)
+    return normalized
   }
 
   private async persist(): Promise<void> {

@@ -139,7 +139,7 @@ export class OpenAiCompatibleClient implements LlmClient {
         if (trimmed.startsWith('data:')) {
           const data = trimmed.slice(5).trim()
           if (data === '[DONE]') return { done: true, chunk: null }
-          rawSse += `${data}\n`
+          if (!receivedDelta) rawSse += `${data}\n`
           let parsed: unknown
           try {
             parsed = JSON.parse(data)
@@ -155,7 +155,7 @@ export class OpenAiCompatibleClient implements LlmClient {
         }
         // A non-data line — typically a whole JSON body from a server
         // that ignored `stream: true`.
-        rawBody += trimmed
+        if (!receivedDelta) rawBody += trimmed
         return { done: false, chunk: null }
       }
 

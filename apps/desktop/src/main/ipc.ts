@@ -67,12 +67,21 @@ function handle<T>(
 
 export function registerIpcHandlers(): void {
   const credentials = new SafeCredentialStore(() => app.getPath('userData'))
-  const watcher = new VaultWatcher((files) => void refreshIndexFiles(files))
+  const watcher = new VaultWatcher((files) => void handleVaultChanges(files))
 
   // The index is a long-lived derived cache; it is rebuilt automatically
   // when the Vault location changes.
   let indexCache: { vaultPath: string; index: SearchIndexService } | null = null
   let memoryCache: { vaultPath: string; memory: MemoryService; points: LearningPointStore } | null = null
+  type TranslationServices = {
+    translation: TranslationService
+    store: TranslationStore
+    history: HistoryService
+    glossary: GlossaryStore
+    index: SearchIndexService
+  }
+  let servicesCache: { vaultPath: string; promise: Promise<TranslationServices> } | null = null
+  let providerCache: { vaultPath: string; promise: Promise<ProviderRuntime[]> } | null = null
   function getIndex(): SearchIndexService {
     const vaultPath = getVaultPath()
     if (!indexCache || indexCache.vaultPath !== vaultPath) {
@@ -101,7 +110,7 @@ export function registerIpcHandlers(): void {
 
   /** AI client for optional enhancement paths; null when no key is set. */
   async function createClientOrNull(): Promise<LlmClient | null> {
-    const providers = await buildProviderRuntimes()
+    const providers = await getProviderRuntimes()
     return providers[0]?.client ?? null
   }
 
@@ -123,6 +132,7 @@ export function registerIpcHandlers(): void {
 
   async function refreshIndexFiles(files: string[]): Promise<void> {
     const index = getIndex()
+    await index.ensure()
     for (const file of files) {
       if (!file.endsWith('.md')) continue
       try {
@@ -138,6 +148,23 @@ export function registerIpcHandlers(): void {
         }
       }
     }
+  }
+
+  async function handleVaultChanges(files: string[]): Promise<void> {
+    const translationFiles = files.filter((file) => /^tr_\d{8}_\d+.*\.md$/i.test(path.basename(file)))
+    if (translationFiles.length > 0) await refreshIndexFiles(translationFiles)
+
+    const vaultPath = getVaultPath()
+    if (files.some((file) => isInside(file, path.join(vaultPath, 'prompts')))) servicesCache = null
+    if (files.some((file) => path.normalize(file) === path.normalize(path.join(vaultPath, 'config.json')))) {
+      providerCache = null
+    }
+  }
+
+  function isInside(file: string, root: string): boolean {
+    const normalizedFile = path.resolve(file).toLowerCase()
+    const normalizedRoot = path.resolve(root).toLowerCase()
+    return normalizedFile === normalizedRoot || normalizedFile.startsWith(`${normalizedRoot}${path.sep}`)
   }
 
   async function settingsView(): Promise<SettingsView> {
@@ -159,47 +186,67 @@ export function registerIpcHandlers(): void {
    * Providers built in priority order from the current settings. Keys
    * stay in the Main process — only ready-to-use clients leave here.
    */
-  async function buildProviderRuntimes(): Promise<ProviderRuntime[]> {
-    const vaultSettings = await new SettingsStore(getVaultPath()).get()
-    const keys = await credentials.loadAll()
-    const totalCombos = vaultSettings.providers.reduce((sum, p) => sum + p.models.length, 0)
-    const inPlaceRetries = totalCombos > 1 ? 0 : undefined
-    return vaultSettings.providers.map((profile) => ({
-      id: profile.id,
-      label: profile.label,
-      models: profile.models,
-      client: new OpenAiCompatibleClient({
-        baseUrl: profile.baseUrl,
-        apiKey: keys[profile.id] ?? null,
-        model: profile.models[0]!,
-        temperature: profile.temperature,
-        timeoutMs: profile.timeoutMs,
-        maxRetries: inPlaceRetries ?? profile.maxRetries,
-      }),
-    }))
+  function getProviderRuntimes(): Promise<ProviderRuntime[]> {
+    const vaultPath = getVaultPath()
+    if (providerCache?.vaultPath === vaultPath) return providerCache.promise
+
+    const promise = (async () => {
+      const [vaultSettings, keys] = await Promise.all([
+        new SettingsStore(vaultPath).get(),
+        credentials.loadAll(),
+      ])
+      const totalCombos = vaultSettings.providers.reduce((sum, p) => sum + p.models.length, 0)
+      const inPlaceRetries = totalCombos > 1 ? 0 : undefined
+      return vaultSettings.providers.map((profile) => ({
+        id: profile.id,
+        label: profile.label,
+        models: profile.models,
+        client: new OpenAiCompatibleClient({
+          baseUrl: profile.baseUrl,
+          apiKey: keys[profile.id] ?? null,
+          model: profile.models[0]!,
+          temperature: profile.temperature,
+          timeoutMs: profile.timeoutMs,
+          maxRetries: inPlaceRetries ?? profile.maxRetries,
+        }),
+      }))
+    })()
+    providerCache = { vaultPath, promise }
+    void promise.catch(() => {
+      if (providerCache?.promise === promise) providerCache = null
+    })
+    return promise
   }
 
-  /** Services are rebuilt per request so settings changes apply immediately. */
-  async function buildServices(): Promise<{
-    translation: TranslationService
-    store: TranslationStore
-    history: HistoryService
-  }> {
+  /** Translation services are shared; settings handlers invalidate changed runtime state. */
+  function getServices(): Promise<TranslationServices> {
     const vaultPath = getVaultPath()
+    if (servicesCache?.vaultPath === vaultPath) return servicesCache.promise
+
     const prompts = new PromptManager([path.join(vaultPath, 'prompts'), builtinPromptsDir()])
-    await prompts.load()
     const index = getIndex()
+    const glossary = new GlossaryStore(vaultPath)
     const store = new TranslationStore(vaultPath)
-    const history = new HistoryService(store, index)
-    return {
-      translation: new TranslationService(
-        prompts,
-        new ContextRetriever({ glossary: new GlossaryStore(vaultPath), index }),
-      ),
-      store,
-      history,
-    }
+    const promise = (async () => {
+      await Promise.all([prompts.load(), index.ensure(), glossary.list()])
+      const history = new HistoryService(store, index)
+      return {
+        translation: new TranslationService(prompts, new ContextRetriever({ glossary, index })),
+        store,
+        history,
+        glossary,
+        index,
+      }
+    })()
+    servicesCache = { vaultPath, promise }
+    void promise.catch(() => {
+      if (servicesCache?.promise === promise) servicesCache = null
+    })
+    return promise
   }
+
+  // Hide local setup latency behind app startup; the first request joins these promises.
+  void Promise.all([getServices(), getProviderRuntimes()]).catch(() => undefined)
 
   /** Connectivity test: tries each model in order with a tiny prompt. */
   handle(IPC.providerTest, async (payload) => {
@@ -245,7 +292,7 @@ export function registerIpcHandlers(): void {
 
   handle(IPC.translate, async (payload) => {
     const request = TranslateRequestSchema.parse(payload)
-    const [services, providers] = await Promise.all([buildServices(), buildProviderRuntimes()])
+    const [services, providers] = await Promise.all([getServices(), getProviderRuntimes()])
     if (providers.length === 0) throw new AppError('CONFIG_ERROR', 'No AI provider configured')
     return services.translation.translate(request, providers)
   })
@@ -262,14 +309,21 @@ export function registerIpcHandlers(): void {
 
   handle(IPC.translateStream, async (payload, event) => {
     const { requestId, ...request } = TranslateStreamRequestSchema.parse(payload)
-    const [services, providers] = await Promise.all([buildServices(), buildProviderRuntimes()])
+    const streamStart = Date.now()
+    const [services, providers] = await Promise.all([getServices(), getProviderRuntimes()])
     if (providers.length === 0) throw new AppError('CONFIG_ERROR', 'No AI provider configured')
     const controller = new AbortController()
     streamControllers.set(requestId, controller)
-    const streamStart = Date.now()
+    const debug = process.env['TT_STREAM_DEBUG'] === '1'
+    if (debug) console.log(`[stream] prepared +${Date.now() - streamStart}ms`)
+    let firstDelta = true
     try {
       return await services.translation.translateStream(request, providers, (delta) => {
-        if (process.env['TT_STREAM_DEBUG'] === '1') {
+        if (debug) {
+          if (firstDelta && delta.length > 0) {
+            firstDelta = false
+            console.log(`[stream] first-delta +${Date.now() - streamStart}ms`)
+          }
           console.log(`[stream-delta] +${Date.now() - streamStart}ms len=${delta.length}`)
         }
         if (!event.sender.isDestroyed()) {
@@ -283,28 +337,28 @@ export function registerIpcHandlers(): void {
 
   handle(IPC.save, async (payload) => {
     const request = SaveRequestSchema.parse(payload)
-    const services = await buildServices()
+    const services = await getServices()
     const saved = await services.store.save(request)
     const record = await services.store.get(saved.id)
-    if (record) await getIndex().upsert(record)
+    if (record) await services.index.upsert(record)
     return saved
   })
 
   handle(IPC.getRecord, async (payload) => {
     const request = GetRecordRequestSchema.parse(payload)
-    const services = await buildServices()
+    const services = await getServices()
     return services.history.get(request.id)
   })
 
   handle(IPC.historyList, async (payload) => {
     const query = HistoryQuerySchema.parse(payload)
-    const services = await buildServices()
+    const services = await getServices()
     return services.history.list(query)
   })
 
   handle(IPC.historyUpdate, async (payload) => {
     const request = HistoryUpdateSchema.parse(payload)
-    const services = await buildServices()
+    const services = await getServices()
     return services.history.updateMeta(request.id, {
       tags: request.tags,
       notes: request.notes,
@@ -314,19 +368,19 @@ export function registerIpcHandlers(): void {
 
   handle(IPC.historyDelete, async (payload) => {
     const request = IdRequestSchema.parse(payload)
-    const services = await buildServices()
+    const services = await getServices()
     return services.history.setDeleted(request.id, true)
   })
 
   handle(IPC.historyRestore, async (payload) => {
     const request = IdRequestSchema.parse(payload)
-    const services = await buildServices()
+    const services = await getServices()
     return services.history.setDeleted(request.id, false)
   })
 
   handle(IPC.historyAnalyze, async (payload) => {
     const request = IdRequestSchema.parse(payload)
-    const [services, providers] = await Promise.all([buildServices(), buildProviderRuntimes()])
+    const [services, providers] = await Promise.all([getServices(), getProviderRuntimes()])
     const record = await services.history.get(request.id)
     if (!record) {
       throw new AppError('STORAGE_ERROR', `Record not found: ${request.id}`)
@@ -337,7 +391,7 @@ export function registerIpcHandlers(): void {
     const updated = await services.store.update(request.id, {
       analyzedAt: new Date().toISOString(),
     })
-    if (updated) await getIndex().upsert(updated)
+    if (updated) await services.index.upsert(updated)
     return { learningPointIds }
   })
 
@@ -356,16 +410,16 @@ export function registerIpcHandlers(): void {
     return getMemory().delete(request.id)
   })
 
-  handle(IPC.glossaryList, async () => new GlossaryStore(getVaultPath()).list())
+  handle(IPC.glossaryList, async () => (await getServices()).glossary.list())
 
   handle(IPC.glossaryAdd, async (payload) => {
     const request = GlossaryEntrySchema.parse(payload)
-    return new GlossaryStore(getVaultPath()).add(request)
+    return (await getServices()).glossary.add(request)
   })
 
   handle(IPC.glossaryRemove, async (payload) => {
     const request = TermRequestSchema.parse(payload)
-    return new GlossaryStore(getVaultPath()).remove(request.term)
+    return (await getServices()).glossary.remove(request.term)
   })
 
   handle(IPC.trainingGetToday, async () => {
@@ -387,6 +441,7 @@ export function registerIpcHandlers(): void {
 
   handle(IPC.settingsUpdate, async (payload) => {
     const patch = UpdateSettingsSchema.parse(payload)
+    const vaultChanged = patch.vaultPath !== undefined
     if (patch.vaultPath) setVaultPath(patch.vaultPath)
     if (patch.providers) {
       // Prune keys of deleted providers, then store any newly entered ones.
@@ -400,6 +455,8 @@ export function registerIpcHandlers(): void {
       translation: patch.translation,
       training: patch.training,
     })
+    if (vaultChanged) servicesCache = null
+    if (vaultChanged || patch.providers !== undefined || patch.providerKeys !== undefined) providerCache = null
     return settingsView()
   })
 
@@ -411,6 +468,8 @@ export function registerIpcHandlers(): void {
     const chosen = result.filePaths[0]
     if (!chosen) return null
     setVaultPath(chosen)
+    servicesCache = null
+    providerCache = null
     return chosen
   })
 }

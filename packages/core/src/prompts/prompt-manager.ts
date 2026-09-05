@@ -26,10 +26,12 @@ export class PromptManager {
       } catch {
         continue // missing or unreadable directory — skip
       }
-      for (const file of files) {
-        const key = toPromptKey(dir, file)
+      const loaded = await Promise.all(
+        files.map(async (file) => ({ key: toPromptKey(dir, file), template: await fs.readFile(file, 'utf8') })),
+      )
+      for (const { key, template } of loaded) {
         if (!this.templates.has(key)) {
-          this.templates.set(key, await fs.readFile(file, 'utf8'))
+          this.templates.set(key, template)
         }
       }
     }

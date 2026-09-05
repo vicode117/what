@@ -68,6 +68,8 @@ export const TranslateResultSchema = z.object({
   /** Id of the provider profile that served the request (failover indicator). */
   providerId: z.string().optional(),
   usage: UsageSchema.optional(),
+  /** Core time from translation start until the first non-empty stream delta. */
+  firstTokenMs: z.number().int().min(0).optional(),
   durationMs: z.number().int().min(0),
 })
 

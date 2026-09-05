@@ -65,6 +65,7 @@ export class TranslationService {
   ) {}
 
   async translate(request: TranslateRequest, providers: ProviderRuntime[]): Promise<TranslateResult> {
+    const startedAt = Date.now()
     const systemPrompt = await this.buildPrompt(request)
     const messages = [
       { role: 'system' as const, content: systemPrompt },
@@ -78,7 +79,6 @@ export class TranslationService {
     let lastError: unknown
     for (const { provider, model } of attempts) {
       try {
-        const startedAt = Date.now()
         const result: GenerationResult = await provider.client.generate({ messages, model })
         return {
           translatedText: result.text.trim(),
@@ -110,6 +110,7 @@ export class TranslationService {
     onDelta?: (delta: string) => void,
     signal?: AbortSignal,
   ): Promise<TranslateResult> {
+    const startedAt = Date.now()
     const systemPrompt = await this.buildPrompt(request)
     const messages = [
       { role: 'system' as const, content: systemPrompt },
@@ -121,34 +122,37 @@ export class TranslationService {
     }
 
     let emitted = false
+    let firstTokenMs: number | undefined
     let lastError: unknown
     for (const { provider, model } of attempts) {
       try {
-        const startedAt = Date.now()
-        let text = ''
+        const textChunks: string[] = []
         let answeredModel: string | undefined
         let usage: TranslateResult['usage']
 
         if (provider.client.stream) {
           for await (const chunk of provider.client.stream({ messages, model, signal })) {
-            text += chunk.textDelta
+            textChunks.push(chunk.textDelta)
             if (!answeredModel && chunk.model) answeredModel = chunk.model
             if (chunk.textDelta.length > 0) {
+              firstTokenMs ??= Date.now() - startedAt
               emitted = true
               onDelta?.(chunk.textDelta)
             }
           }
         } else {
           const result = await provider.client.generate({ messages, model, signal })
-          text = result.text
+          textChunks.push(result.text)
           answeredModel = result.model
           usage = result.usage
-          if (text.length > 0) {
+          if (result.text.length > 0) {
+            firstTokenMs ??= Date.now() - startedAt
             emitted = true
-            onDelta?.(text)
+            onDelta?.(result.text)
           }
         }
 
+        const text = textChunks.join('')
         const trimmed = text.trim()
         if (trimmed.length === 0) {
           throw new AppError('INVALID_RESPONSE', 'Provider returned an empty response', {
@@ -161,6 +165,7 @@ export class TranslationService {
           providerId: provider.id,
           model: answeredModel ?? model,
           usage,
+          firstTokenMs,
           durationMs: Date.now() - startedAt,
         }
       } catch (error) {

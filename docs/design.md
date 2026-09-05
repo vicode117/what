@@ -22,6 +22,9 @@ Architecture after Slices 1–6, following the product prompt.
   OpenAI-compatible adapter; per-attempt timeout (AbortController), bounded retry with backoff for
   NETWORK_ERROR / RATE_LIMIT / PROVIDER_ERROR, typed errors (`TIMEOUT | RATE_LIMIT | AUTH_ERROR |
   NETWORK_ERROR | INVALID_RESPONSE | PROVIDER_ERROR | CANCELLED | …`).
+- **Translation hot path**: Main prewarms and reuses prompt, provider, glossary, and search-index
+  runtime state; initialization is single-flight and invalidated when settings, prompts, or the
+  Vault path changes. Streaming exposes first-token timing and renders the first delta immediately.
 - **Renderer / Preload / Main boundary**: renderer calls only domain APIs
   (`translation.*`, `history.*`, `memory.*`, `glossary.*`, `training.*`, `maintenance.rebuildIndex`,
   `settings.*`); it never sees the API key (only `hasApiKey`), the filesystem, or Node APIs.
@@ -55,6 +58,9 @@ Watch:      chokidar (debounced) ──▶ re-parse changed files ──▶ inde
 6. **Replaceable pedagogy boundaries** — `ExerciseSelectionStrategy` (default 50% due / 30% weak /
    20% new, user-corrected first) and `ReviewScheduler` (default 1d/2d/3→60d streaks) are
    interfaces, so FSRS-class algorithms slot in without touching UI or services.
+7. **Latency before abstraction** — translation setup is warmed at app start, repeated disk/config
+   work is cached, and stream updates are coalesced only after the first delta; no provider racing
+   or quality-changing prompt/model shortcut is used.
 
 ## IPC contract (summary)
 
@@ -71,7 +77,7 @@ Every reply is `{ ok: true, data } | { ok: false, error }` with an `ErrorCode` f
 
 ## Status & roadmap
 
-Slices 1–6 implemented and verified (lint / typecheck / 118 tests / build / packaged build).
+Slices 1–6 implemented and verified (lint / typecheck / tests / build / packaged build).
 Slice 7 (embeddings + semantic retrieval) is deliberately NOT implemented — the spec requires full
-text retrieval to prove insufficient first. Other follow-ups: streaming for long outputs, statistics
-dashboard, richer history analytics.
+text retrieval to prove insufficient first. Other follow-ups: statistics dashboard and richer history
+analytics.

@@ -97,11 +97,21 @@ export class MemoryService {
 
 const GLOSSARY_HEADER = '# Glossary'
 
+type GlossaryCache = {
+  mtimeMs: number
+  ctimeMs: number
+  size: number
+  entries: GlossaryEntry[]
+}
+
 /**
  * Explicit user-maintained glossary at `memory/glossary/glossary.md`.
  * Entries outrank any inferred preference in translation context.
  */
 export class GlossaryStore {
+  private cache: GlossaryCache | null = null
+  private loadPromise: Promise<GlossaryEntry[]> | null = null
+
   constructor(private readonly vaultPath: string) {}
 
   private get file(): string {
@@ -109,13 +119,42 @@ export class GlossaryStore {
   }
 
   async list(): Promise<GlossaryEntry[]> {
+    const stat = await fs.stat(this.file).catch(() => null)
+    if (stat === null) {
+      this.cache = null
+      return []
+    }
+    if (
+      this.cache &&
+      this.cache.mtimeMs === stat.mtimeMs &&
+      this.cache.ctimeMs === stat.ctimeMs &&
+      this.cache.size === stat.size
+    ) {
+      return this.cache.entries
+    }
+    if (this.loadPromise) return this.loadPromise
+
+    const promise = this.read(stat.mtimeMs, stat.ctimeMs, stat.size)
+    this.loadPromise = promise
+    try {
+      return await promise
+    } finally {
+      if (this.loadPromise === promise) this.loadPromise = null
+    }
+  }
+
+  private async read(mtimeMs: number, ctimeMs: number, size: number): Promise<GlossaryEntry[]> {
     const raw = await fs.readFile(this.file, 'utf8').catch(() => null)
-    if (raw === null) return []
+    if (raw === null) {
+      this.cache = null
+      return []
+    }
     const entries: GlossaryEntry[] = []
     for (const line of raw.split(/\r?\n/)) {
       const match = /^- (.+?) :: (.+?)\s*$/.exec(line)
       if (match) entries.push({ term: match[1]!, translation: match[2]! })
     }
+    this.cache = { mtimeMs, ctimeMs, size, entries }
     return entries
   }
 
@@ -144,5 +183,9 @@ export class GlossaryStore {
       : ''
     await fs.mkdir(path.dirname(this.file), { recursive: true })
     await fs.writeFile(this.file, `${GLOSSARY_HEADER}\n\n${body}`, 'utf8')
+    const stat = await fs.stat(this.file).catch(() => null)
+    this.cache = stat
+      ? { mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, size: stat.size, entries }
+      : null
   }
 }

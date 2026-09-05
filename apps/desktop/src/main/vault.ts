@@ -13,6 +13,8 @@ const APP_CONFIG_FILE = 'app-config.json'
 
 type AppConfig = { vaultPath?: string }
 
+let cachedVaultPath: string | null = null
+
 function appConfigPath(): string {
   return path.join(app.getPath('userData'), APP_CONFIG_FILE)
 }
@@ -26,7 +28,9 @@ function readAppConfig(): AppConfig {
 }
 
 export function getVaultPath(): string {
-  return readAppConfig().vaultPath ?? path.join(app.getPath('documents'), 'TranslationVault')
+  if (cachedVaultPath !== null) return cachedVaultPath
+  cachedVaultPath = readAppConfig().vaultPath ?? path.join(app.getPath('documents'), 'TranslationVault')
+  return cachedVaultPath
 }
 
 export function setVaultPath(vaultPath: string): string {
@@ -36,5 +40,6 @@ export function setVaultPath(vaultPath: string): string {
   mkdirSync(vaultPath, { recursive: true })
   const config: AppConfig = { ...readAppConfig(), vaultPath }
   writeFileSync(appConfigPath(), `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  cachedVaultPath = vaultPath
   return vaultPath
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -147,5 +147,17 @@ describe('GlossaryStore', () => {
 
     await glossary.remove('traceability')
     expect((await glossary.list()).map((entry) => entry.term)).toEqual(['Work Order'])
+  })
+
+  it('refreshes cached entries when the glossary file changes externally', async () => {
+    const file = path.join(vault, 'memory', 'glossary', 'glossary.md')
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, '# Glossary\n\n- term :: first\n', 'utf8')
+
+    const glossary = new GlossaryStore(vault)
+    expect(await glossary.list()).toEqual([{ term: 'term', translation: 'first' }])
+
+    await writeFile(file, '# Glossary\n\n- term :: refreshed translation\n', 'utf8')
+    expect(await glossary.list()).toEqual([{ term: 'term', translation: 'refreshed translation' }])
   })
 })
